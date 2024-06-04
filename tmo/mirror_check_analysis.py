@@ -33,6 +33,9 @@ def calc_transmission(pwr_a, pwr_b, g_a, g_b, logging=None):
     ---------
     transmission, sigma
     """
+    # dac_min_div = np.diff(np.sort(np.unique(pwr_a))).min()
+    # dac_err_std = dac_min_div / np.sqrt(3)
+    
     onset_a = np.where(pwr_a > pwr_a.max() /2)[0][0]
     onset_ga = int(np.round(onset_a * g_a.size / pwr_a.size))
     pwr_a = pwr_a[onset_a:]
@@ -56,7 +59,9 @@ def calc_transmission(pwr_a, pwr_b, g_a, g_b, logging=None):
     g_a_mean = g_a.mean()
     g_b_mean = g_b.mean()
     transm = pwr_a_mean / pwr_b_mean * g_b_mean / g_a_mean
-    relstderr = [x.std(ddof=1)/np.sqrt(x.size)/x.mean() for x in [pwr_a, pwr_b, g_a, g_b]]
+    relstderr = [x.std(ddof=1)/x.mean() for x in [pwr_a, pwr_b, g_a, g_b]]
+    # for x in [pwr_a, pwr_b]:
+    #     relstderr.append(dac_err_std/np.sqrt(x.size)/x.mean())
     relstderr = np.sum(np.array(relstderr)**2)**0.5
     return transm, transm * relstderr
 
