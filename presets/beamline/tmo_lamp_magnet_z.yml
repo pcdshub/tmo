@@ -1,0 +1,10 @@
+magent_in:
+  active: true
+  history:
+    29 Sep 2023 14:29:19: '   -5.3602'
+  value: -5.360195000000002
+magent_out:
+  active: true
+  history:
+    29 Sep 2023 14:29:53: '   -5.3602'
+  value: -5.360195000000002

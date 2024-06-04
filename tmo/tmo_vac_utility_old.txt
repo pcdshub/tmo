@@ -1,0 +1,113 @@
+#5/3/2023
+#JPC changed the vac_checkout script to use a json file instead of a big block of text.... this is the text that was removed.
+
+
+# HV Gauges on the beamline
+_HV_BL_GAUGES = [
+    'MR2K4:KBO:GCC:01',    
+    'PA1K4:IP1:GCC:01',    
+    'IM4K4:PPM:GCC:01',
+    'LI2K4:IP1:GFS:01',
+    'LI2K4:IP1:GFS:02',
+    'LI2K4:IP1:GFS:03',
+    'TMO:IP1:MAIN:GAUGE',
+    'IM5K4:PPM:GCC:01',
+    'PA2K4:IP1:GCC:01',
+    'MR4K4:KBO:GCC:01',
+    'TMO:IP2:MAIN:GAUGE',
+    'TM2K4:IP2:GCC:01',
+    'PF2K4:KBO:GCC:01'
+]
+
+#LV Gagues on the beamline
+_LV_BL_GAUGES = [
+    'MR2K4:KBO:GPI:01',
+    'PA1K4:IP1:GPI:01',
+    'TMO:ROUGH1:GPI:01',
+    'TMO:ROUGH2:GPI:01',
+    'TMO:ROUGH1:GPI:02',
+    'TMO:ROUGH2:GPI:02',
+    'TMO:ROUGH1:GPI:03',
+    'PA2K4:IP1:GPI:01',
+    'MR4K4:KBO:GPI:01',
+]
+
+#HV LAMP Gauges
+_HV_LAMP_GAUGES =[
+    'LAMP:GJ1:GCC:01',
+    'LAMP:GJ2:GCC:01',
+    'LAMP:C1:GHC:01',
+    'LAMP:C2:GCC:01',   
+    'LAMP:CATCH:GCC:02',
+    'LAMP:CATCH:GCC:01',
+]
+
+#LV LAMP Gauges
+_LV_LAMP_GAUGES = [
+    'LAMP:ROUGH:GPI:02',
+    'LAMP:ROUGH:GPI:01',
+    'LAMP:ROUGH:GPI:03',
+    'LAMP:ROUGH:GPI:04',
+    'LAMP:GJ1:GPI:01',
+    'LAMP:GJ2:GPI:01',
+    'LAMP:C2:GPI:01'
+]
+
+#HV MRCO Gauges
+_HV_MRCO_GAUGES =['MRCO:MAIN:GHC:01']
+
+#LV MRCO Gauges
+_LV_MRCO_GAUGES = [
+    'MRCO:ROUGH:GPI:02',
+    'MRCO:ROUGH:GPI:01',
+    'MRCO:ROUGH:GPI:03',
+    'MRCO:ROUGH:GPI:04'
+]
+
+# All Gauges
+_GAUGES = [_HV_BL_GAUGES, _LV_BL_GAUGES, _HV_LAMP_GAUGES, _LV_LAMP_GAUGES, _HV_MRCO_GAUGES, _LV_MRCO_GAUGES]
+
+# Pumps on the beamline
+_BL_PUMP = [
+    'PA1K4:IP1:PTM:01',
+    'PA1K4:IP1:PTM:02',
+    'PA1K4:IP1:PTM:03',
+    'IM4K4:PPM:PTM:01',
+    'LI1K4:PPM:PTM:01',
+    'LI3K4:IP1:OUT:PTM:01',
+    'TM1K4:PTM:01',
+    'IM5K4:PPM:PTM:01'
+]
+ 
+# Pumps on LAMP
+_LAMP_PUMP = [
+    'LAMP:C2:PTM:01',
+    'LAMP:C2:PTM:02', 
+    'LAMP:C2:PTM:03',
+    'LAMP:C2:PTM:04',
+    'LAMP:GJ1:PTM:01',
+    'LAMP:GJ1:PTM:02',
+    'LAMP:GJ1:PTM:03',
+    'LAMP:GJ1:PTM:04',
+    'LAMP:GJ2:PTM:01',
+    'LAMP:GJ2:PTM:02',
+    'LAMP:GJ2:PTM:03',
+    'LAMP:GJ2:PTM:04',
+    'LAMP:ROUGH:PTM:01'
+]
+
+# Pumps on MRCO
+_MRCO_PUMP = [
+    'MRCO:MAIN:PTM:01',
+    'MRCO:MAIN:PTM:02',
+    'MRCO:MAIN:PTM:03',
+    'MRCO:MAIN:PTM:04',
+    'MRCO:ROUGH:PTM:01'
+]
+
+# TMO Rouging Valves 
+_TMO_Rough_Valves = ['TMO:ROUGH1:VRC:01', 'TMO:ROUGH1:VRC:02', 'TMO:ROUGH2:VRC:01']
+# LAMP Roughting Valves
+_LV_LAMP_VALVES = ['LAMP:ROUGH:VRC:01', 'LAMP:ROUGH:VRC:02', 'LAMP:ROUGH:VRC:03']
+# MRCO Roughting Valves
+_LV_MRCO_VALVES = ['MRCO:ROUGH:VRC:01', 'MRCO:ROUGH:VRC:02', 'MRCO:ROUGH:VRC:03']

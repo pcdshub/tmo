@@ -1,0 +1,20 @@
+from pcdsdevices.mpod_apalis import MPODApalisChannel
+
+#dicts for all channels
+mpod01_m1 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M1:C%d'%i, name='mpod01_m1_c%d'%i) for i in range(24)}
+mpod01_m2 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M2:C%d'%i, name='mpod01_m2_c%d'%i) for i in range(24)}
+mpod01_m3 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M3:C%d'%i, name='mpod01_m3_c%d'%i) for i in range(24)}
+mpod01_m4 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M4:C%d'%i, name='mpod01_m4_c%d'%i) for i in range(16)}
+mpod01_m5 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M5:C%d'%i, name='mpod01_m5_c%d'%i) for i in range(16)}
+mpod01_m6 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M6:C%d'%i, name='mpod01_m6_c%d'%i) for i in range(16)}
+mpod01_m7 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M7:C%d'%i, name='mpod01_m7_c%d'%i) for i in range(16)}
+mpod01_m8 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M8:C%d'%i, name='mpod01_m8_c%d'%i) for i in range(16)}
+mpod01_m9 = { 'c%d'%i: MPODApalisChannel('TMO:MPOD:01:M9:C%d'%i, name='mpod01_m9_c%d'%i) for i in range(16)}
+
+mpod01_list = [mpod01_m1, mpod01_m2, mpod01_m3, mpod01_m4, mpod01_m5, mpod01_m6, mpod01_m7, mpod01_m8, mpod01_m9]
+class mpodcl: pass
+mpod01 = mpodcl()
+for mpod_module in mpod01_list:
+    for k in mpod_module:
+        if mpod_module[k].desc.get()!='':
+            setattr(mpod01, mpod_module[k].desc.get().replace(' ','_'), mpod_module[k])
