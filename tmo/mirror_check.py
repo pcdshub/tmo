@@ -289,12 +289,12 @@ class MirrorCheck:
 
         gmd_avg_before = data_before["kfe_signals_kfe_gmd_avg_int_mean"]    # noqa: E501
         gmd_avg_after = data_after["kfe_signals_kfe_gmd_avg_int_mean"]      # noqa: E501
-        ppm_before = data_before[
-            f"{self._mirror.imager_before.name}_power_meter_raw_voltage_buffer_mean"        # noqa: E501
-        ]
-        ppm_after = data_after[
-            f"{self._mirror.imager_after.name}_power_meter_raw_voltage_buffer_mean"         # noqa: E501
-        ]
+        # ppm_before = data_before[
+        #     f"{self._mirror.imager_before.name}_power_meter_raw_voltage_buffer_mean"        # noqa: E501
+        # ]
+        # ppm_after = data_after[
+        #     f"{self._mirror.imager_after.name}_power_meter_raw_voltage_buffer_mean"         # noqa: E501
+        # ]
 
         logging.info("step #10: calcualte deviation")
         deviation = 2.0 * (
@@ -309,9 +309,26 @@ class MirrorCheck:
         logging.info("step #11: calcualte transmission")
         bg_avg_noise_imager_before = background_noise[f"{self._mirror.imager_before.name}_power_meter_raw_voltage_buffer_mean"]  # noqa: E501
         bg_avg_noise_imager_after = background_noise[f"{self._mirror.imager_after.name}_power_meter_raw_voltage_buffer_mean"]  # noqa: E501
-
-        transmission = ((ppm_after - bg_avg_noise_imager_after) / (ppm_before - bg_avg_noise_imager_before)) * (gmd_avg_before / gmd_avg_after)  # noqa: E501
-
+        
+        # Read the time-series, instead of the time-average,
+        # to calculate the transmission
+        ppm_after = data_after[
+            f"{self._mirror.imager_after.name}_power_meter_raw_voltage_buffer"
+        ]
+        ppm_before = data_before[
+            f"{self._mirror.imager_before.name}_power_meter_raw_voltage_buffer"
+        ]
+        gmd_avg_before = data_before["kfe_signals_kfe_gmd_avg_int"]  
+        gmd_avg_after = data_after["kfe_signals_kfe_gmd_avg_int"]      # noqa: E501
+        ##TODO: truncate to the time window when the rep rate has ramped up
+        t_onset = 0
+        logging.info(f"Truncating to after the onset of beam power t>{t_onset}.")
+        transmission = calc_transmission(ppm_after - bg_avg_noise_imager_after,
+                                         ppm_before - bg_avg_noise_imager_before,
+                                         gmd_avg_after,
+                                         gmd_avg_before)
+        
+        
         logging.info("transmission = {}".format(transmission))
 
         data = {
@@ -386,3 +403,26 @@ def check_kbo2_transmission(output_path="/reg/g/pcds/pyps/apps/hutch-python/tmo/
     """
     kbo2 = MirrorCheck(mirrors["TMO_KBO2"], output_path, scan_duration)
     kbo2.start_test()
+
+
+def calc_transmission(pwr_a, pwr_b, g_a, g_b):
+    """
+    Calculate the transmission, with uncertainty
+    Parameters
+    ---------
+    pwr_a : Offset-subtracted power meter voltage, after the KB 
+    pwr_b : Offset-subtracted power meter voltage, before the KB
+    g_a : GMD after
+    g_b : GMD before
+    Returns
+    ---------
+    transmission, sigma
+    """
+    pwr_a_mean = pwr_a.mean()
+    pwr_b_mean = pwr_b.mean()
+    g_a_mean = g_a.mean()
+    g_b_mean = g_b.mean()
+    transm = pwr_a_mean / pwr_b_mean * g_b_mean / g_a_mean
+    relstderr = [x.std(ddof=1)/x.mean() for x in [pwr_a, pwr_b, g_a, g_b]]
+    relstderr = np.sum(np.array(relstderr)**2)**0.5
+    return transm, transm * relstderr
