@@ -105,3 +105,6 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# h5 files that logs transmission test results
+tmo/mirror-check/scans/TMO_KBO1/*.h5
