@@ -9,7 +9,7 @@ from pcdsdevices.pv_positioner import PVPositioner, PVPositionerIsClose
 from pcdsdevices.valve import VVC, VCN
 from epics import caget, caput, cainfo
 from tmo.db import tmo_cvmi, tmo_lamp, tmo_mrco, tv1k4_vgc_01, tv1k4_vfs_01, tv1k4_vgc_02, st3k4_pps_vgc_01, mr2k4_kbo_vwc_01, mr3k4_kbo_vwc_01, mr3k4_kbo_vfs_01, li3k4_ip1_vwc_01, pc5k4_vwc_01, rtdsk0
-from tmo.db import im2k0
+from tmo.db import im2k0, st1k4
 from tmo.tmo_hvac import tmo_hvac
 from pcdsdevices.mpod_apalis import MPODApalisChannel
 from itertools import chain
@@ -305,7 +305,7 @@ class SXRGasAtt(BaseInterface, GroupDevice):
     
     apperture_array = Cpt(SXRGasAperture, '_MAA', kind='hinted', doc='aperture array for gas attenuator.')
     
-    def setup_mode(self, mode, control_type='transmission', gas_type=None):
+    def setup_mode(self, mode, control_type='transmission', gas_type=None, set_point=None):
         """
         Setup AT1K0 gas attenuator to work in "PMPS" or "Local" mode, with either "transmission control" or "pressure control"
 
@@ -316,41 +316,53 @@ class SXRGasAtt(BaseInterface, GroupDevice):
         control_type : str, optional
             Set control type in "Local" mode, either "transmission" or "pressure" control. The default is 'transmission'.
         gas_type : str, optional
-            Change gas type to "N2" or "Ar". The default is None.If None is passed the attenuator uses the current gas.
+            Change gas type to "N2" or "Ar". The default is None. If None is passed the attenuator uses the current gas.
 
         """
-        if mode is not ('PMPS' or 'Local'):
+        if ( mode.lower() not in ['pmps','local'] ):
             print('unrecognizied mode, options are "PMPS" or "Local"')
             return
-        elif mode == "Local":
-            if control_type is not ('transmission' or 'pressure'):
+        elif mode.lower() == "local":
+            if control_type.lower() not in ['transmission', 'pressure']:
                 print('unrecognizied control type, options are "transmission" or "pressure"')
                 return
-        if gas_type is not ('N2' or 'Ar' or None):
+        if (gas_type not in ['N2', 'Ar', None]):
             print('unrecognizied gas type, options are "N2", "Ar", or None')
             return
         
-        if mode == 'PMPS':
-            self.mode.put('PMPS')
-        elif mode == 'Local':
-            self.mode.put('Local')
-
         if gas_type is not None:
+            self.transmission.put(1)
             self.valve_ar.open_command.put(0)
             self.valve_n2.open_command.put(0)
+            time.sleep(1)
             if gas_type == 'N2':
                   self.valve_n2.open_command.put(1)
             elif gas_type == 'Ar':
-                  self.valve_ar.open_command.put(1)                 
-
-        elif mode == 'Local':          
-            if control_type == 'transmission':
-                 self.transmission.put(1)
-                 self.control_enable.put(1)
-            elif control_type == 'pressure':
-                 self.pressure_control_enable.put(1)
-                 self.control_enable.put(1)
-                 self.pressure.put(0)
+                  self.valve_ar.open_command.put(1)
+            time.sleep(1)
+        
+        if mode.lower() == 'pmps':
+            self.pressure_control_enable.put(0)
+            self.control_enable.put(0)
+            self.mode.put('PMPS')      
+        
+        elif mode.lower() == 'local':
+            if not self.valve_pressure_control.interlock_ok.get():
+                logger.error('Mode not set. '+self.valve_pressure_control.name+'('+self.valve_pressure_control.prefix+') interlock has an issue. Check vacuum system.')
+                return
+            self.mode.put('Local')
+            if control_type.lower() == 'transmission':
+                self.pressure_control_enable.put(0)
+                self.control_enable.put(1)
+                if set_point is not None:
+                    self.transmission.put(set_point)
+            elif control_type.lower() == 'pressure':
+                self.pressure_control_enable.put(1)
+                self.control_enable.put(1)
+                self.pressure.put(0)
+                if set_point is not None:
+                    self.pressure.put(set_point)
+                 
 
 at1k0 = SXRGasAtt('AT1K0:GAS', name='at1k0')
     
@@ -503,9 +515,10 @@ unds = Unds(name='undulators')
 
 def stop_xray():
     """
-    This function requests 0 Hz rate from the K-line controls parameters.  
+    This function puts st1k4 in to block the beam. 
     """
-    tmo_beamline_cntl.rate.mv(0)
+    st1k4.state('IN')
+#    tmo_beamline_cntl.rate.mv(0)
 
 # function to get SQ1 positions... consider if there is a better way to do this... JPC
 def  get_cvmi_sq1(log=False, msg=None, **kwargs):

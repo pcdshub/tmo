@@ -16,16 +16,9 @@ class Bykiks(Device):
     request_burst =  Cpt(EpicsSignal, 'PATT:SYS0:1:BYKIKSCTRL')
     
     def trigger(self):
-#        while bool(self.request_burst.get()): #wait for previous trigger burst to stop
-#            time.sleep(0.01)
-        time.sleep(1) #give additional time for the DAQ to configure when running with bluesky
         logger.info('Burst Enable')
         self.request_burst.put(1) #request burst
         return DeviceStatus(self, done=True, success=True)
-
-#    def stage(self): #This is called at the beginning of a bluesky scan 
-#        time.sleep(10) #this is needed to give the DAQ time to configure before bursting. 
-#        retrun[self]
 
 bykiks = Bykiks('', name='bykiks', read_attrs=['burst_mode_enable'])
 

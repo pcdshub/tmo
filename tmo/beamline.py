@@ -65,8 +65,8 @@ with safe_load('TMO Beamline Control'):
 with safe_load('Missing Beamline Components'):
     from tmo.tmo_beamline_control import gmd, xgmd, at1k0    
 
-#with safe_load('TMO MPOD'):
-#    from tmo.tmo_mpods import tmo_mpod
+with safe_load('TMO MBES Utility'):
+    from tmo.tmo_mbes_utility import mbes_voltage, tmo_lamp_vcn
 
 with safe_load('CVMI Utilities'):
     from tmo.tmo_cvmi_utility import cvmi_voltage_utility, cvmi_optics
@@ -81,13 +81,13 @@ with safe_load('CAM Fiducial Detection'):
     from tmo.cam_fiducial_detection import collect_fiducial_image, analyze_image, check_fiducial_change, check_fiducial_change_orb
 
 with safe_load('TMO OPTICS UTILITIES'):
-    from tmo.tmo_optics import get_KB1, set_KB1, get_fzp, get_mr1k4, get_KB2, get_slits, fix_wfs
+    from tmo.tmo_optics import get_KB1, set_KB1, get_fzp, get_mr1k4, get_KB2, get_slits, fix_wfs, reset_slits
 
 with safe_load('TMO Imager Utility'):
     from tmo.tmo_imager_align import tmo_imagers
 
 with safe_load('TMO Laser'):
-    from tmo.tmo_laser import tmo_laser, get_lm1k4, get_lm2k4, get_atm, stop_laser
+    from tmo.tmo_laser import tmo_laser, get_lm1k4, get_lm2k4, get_atm, stop_laser, get_laser_tpr
 
 with safe_load('LCLS-II get_daq - Timed runs and scans'):
     from tmo.tmo_daq_scans import scan, daq_stats
@@ -120,3 +120,8 @@ def log_change(motor, daq=None):
         elog.post(msg, run=run_num)
     else:
         elog.post(msg)
+
+# from pcdsdevices.sqr1 import SQR1
+with safe_load('SQ1'):
+    from tmo.sqr1 import SQR1
+    tmo_lamp_sq1 = SQR1('MCQ:TMO:01', name='tmo_lamp_sq1')

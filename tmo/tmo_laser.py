@@ -2,15 +2,19 @@ from pcdsdevices.device import Device
 from pcdsdevices.interface import BaseInterface
 from pcdsdevices.pv_positioner import PVPositionerIsClose
 from pcdsdevices.epics_motor import SmarActTipTilt, EpicsMotorInterface, SmarAct
+from pcdsdevices.tpr import TprTrigger, TimingMode
 from ophyd.device import Component as Cpt
 from ophyd.signal import EpicsSignal, EpicsSignalRO
+from pcdsdevices.signal import MultiDerivedSignal, MultiDerivedSignalRO
+from pcdsdevices.type_hints import SignalToValue
 from tmo.db import li1k4, tm1k4
 from tmo.db import elog
-from tmo.tmo_sequencer import tmo_evr2
+#from tmo.tmo_sequencer import tmo_evr2
 from tmo.tmo_beamline_control import _log_positions
 import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
+import numpy as np
 
 class LaserMirrorMotor(PVPositionerIsClose):
     setpoint = Cpt(EpicsSignal, '')
@@ -36,36 +40,6 @@ class LaserDelayA(PVPositionerIsClose):
 class LaserDelayB(PVPositionerIsClose):
     setpoint = Cpt(EpicsSignal, '_SET')
     readback = Cpt(EpicsSignalRO, '_RBV')
-
-#The following method has been replaced with a new version. 
-class TmoLaserOld: 
-    """
-    This class controls motors associated with the IP1 laser system in TMO.
-    stop method closes the laser shutter
-    enable method will open the laser shutter
-    """
-    def __init__(self):
-        self.lens_x = EpicsMotorInterface('LM1K4:EJX_MP2_LS3_LM2', name='lens_x')
-        self.lens_y = EpicsMotorInterface('LM1K4:EJX_MP2_LS3_LM3', name='lens_y')
-        self.lens_z = EpicsMotorInterface('LM1K4:EJX_MP2_LS3_LM1', name='lens_z')
-        self.inj_mr = EpicsMotorInterface('LM1K4:INJ_DP2_MR1', name='inj_mr')
-        self.comp_sep = EpicsMotorInterface('LM1K4:COM_MP1_GT2_LM1', name='grating_sep')
-        self.atm_mr_tt = SmarActTipTilt(prefix="LM1K4:ATM_MP1_MR1", tip_pv="_TIP1", tilt_pv="_TILT1", name="atm_mr_tt")
-        self.oap_tt1 = SmarActTipTilt(prefix="LM1K4:EJX_MP1_OAP1_MR1", tip_pv="_TIP", tilt_pv="_TILT", name="oap_tt1")
-        self.oap_z = EpicsMotorInterface('LM1K4:EJX_MP1_OAP1_LM1', name='oap_z')
-        self.oap_tt3 = SmarActTipTilt(prefix="LM1K4:EJX_MP1_OAP1_MR3", tip_pv="_TIP", tilt_pv="_TILT", name="oap_tt3")
-        self.wp = WaveplateMotor('LM1K4:EJX_MP2_ATT1_POL1:ELL:M1', name='WP')
-    def stop(self):
-        tmo_evr2.polarity.set(0)
-        tmo_evr2.eventcode.set(0)
-        tmo_evr2.enable()
-        #caput("TMO:USR:BHC:AOUT:1", 0)
-    def enable(self):
-        tmo_evr2.polarity.set(1)
-        tmo_evr2.eventcode.set(69)
-        tmo_evr2.enable()
-        #caput("TMO:USR:BHC:AOUT:1", 5)
-
 
 class LI3K4(BaseInterface, Device):
     """
@@ -133,16 +107,17 @@ class TmoLaser(BaseInterface, Device):
     tab_component_names= True
     tab_whitelist = ['stop', 'enable','laser_status']
         
-    lens_x = Cpt(EpicsMotorInterface, 'LM1K4:EJX_MP2_LS1_LM2', kind='normal')
-    lens_y = Cpt(EpicsMotorInterface, 'LM1K4:EJX_MP2_LS1_LM3', kind='normal')
-    lens_z = Cpt(EpicsMotorInterface, 'LM1K4:EJX_MP2_LS1_LM1', kind='normal')
+    lens_x = Cpt(SmarAct, 'LM1K4:EJX_MP2_LS1_LM2', kind='normal')
+    lens_y = Cpt(SmarAct, 'LM1K4:EJX_MP2_LS1_LM3', kind='normal')
+    lens_z = Cpt(SmarAct, 'LM1K4:EJX_MP2_LS1_LM1', kind='normal')
     inj_mr = Cpt(SmarAct, 'LM1K4:INJ_DP2_MR2', kind='normal')
 #    comp_sep = Cpt(SmarAct, 'LM1K4:COM_MP1_GT2_LM1', kind='normal')
-    atm_mr_tt = Cpt(SmarActTipTilt, prefix='LM1K4:ATM_MP1_MR3', tip_pv="_TIP", tilt_pv="_TILT", kind='normal')
+    atm_mr3_tt = Cpt(SmarActTipTilt, prefix='LM1K4:ATM_MP1_MR3', tip_pv="_TIP1", tilt_pv="_TILT1", kind='normal')
     oap_tt1 = Cpt(SmarActTipTilt, prefix="LM1K4:EJX_MP1_OAP1_MR1", tip_pv="_TIP", tilt_pv="_TILT", kind='normal')
     oap_z = Cpt(SmarAct, 'LM1K4:EJX_MP1_OAP1_LM1', kind='normal')
     oap_tt3 = Cpt(SmarActTipTilt, prefix="LM1K4:EJX_MP1_OAP1_MR3", tip_pv="_TIP", tilt_pv="_TILT", kind='normal')
     wp = Cpt(WaveplateMotor, 'LM1K4:EJX_MP2_ATT1_POL1:ELL:M1', kind='normal')
+    att_wp = Cpt(SmarAct, 'LM1K4:INJ_MP1_ATT1_WP1', kind='normal')
 #    delay = Cpt(LaserDelayA, 'LAS:LHN:LLG2:01:PHASCTL', egu='ns', kind='omitted')
 #    delay = Cpt(LaserDelayB, 'LAS:LHN:LLG2:01:PHASCTL:RF_PHASE', egu='ns', kind='omitted')
 #    li3k4_mr1 = Cpt(SmarAct, 'LM1K4:EJX_DP6_CVS1_MR1', kind='normal')
@@ -223,14 +198,15 @@ def get_lm1k4(log=False, **kwargs):
 def get_atm(log=False, **kwargs):
     """
     Get current positions of the ATM optics.
+    
     Parameters:
     ---------------
     log - booleam to log the positions in the elog
     msg - optional argument to append a message to the elog with the positions. 
     """
     curr_positions={
-     "ATM MR tip":tmo_laser.atm_mr_tt.tip.total_step_count.get(),
-    "ATM MR tilt":tmo_laser.atm_mr_tt.tilt.total_step_count.get(),
+     "ATM MR tip":tmo_laser.atm_mr3_tt.tip.total_step_count.get(),
+    "ATM MR tilt":tmo_laser.atm_mr3_tt.tilt.total_step_count.get(),
 #    "ATM target":tm1k4.target.position,
 #    "ATM y-Motor":tm1k4.y_motor.position
     }
@@ -241,3 +217,84 @@ def get_atm(log=False, **kwargs):
     kwargs['tags'] = kwargs.get('tags', ' ') + ' atm'
     _log_positions(curr_positions, log, **kwargs)
   
+def _get_divisor(mds: MultiDerivedSignal, items: SignalToValue) -> int:
+    return round(items[mds.signals[1]]*0.98/items[mds.signals[0]])
+
+def _get_overlap(mds: MultiDerivedSignal, items: SignalToValue) -> float:
+    return ( np.lcm(items[mds.signals[0]],items[mds.signals[1]]) / items[mds.signals[0]] )
+
+def _get_goose_delay(mds: MultiDerivedSignal, items: SignalToValue) -> float:
+    return ( (items[mds.signals[1]] - items[mds.signals[0]]) / (items[mds.signals[2]]*1E-3) )
+
+class LaserTpr(BaseInterface, Device):
+    tab_component_names= True
+    tab_whitelist = ['status']
+    
+    fid_rate = Cpt(EpicsSignalRO,':FIDRATE')
+    sys_clk = Cpt(EpicsSignalRO, ':SYS2_CLK')
+    carbide_pp_tpr = Cpt(TprTrigger, '', channel=5, timing_mode=TimingMode.LCLS2)
+    goose_tpr = Cpt(TprTrigger, '', channel=4, timing_mode=TimingMode.LCLS2)
+    laser_divisor = Cpt(MultiDerivedSignalRO, attrs=['carbide_pp_tpr.eventrate', 'fid_rate'], calculate_on_get=_get_divisor)
+    goose_divisor = Cpt(MultiDerivedSignalRO, attrs=['goose_tpr.eventrate','fid_rate'], calculate_on_get=_get_divisor)
+    goose_freq_pulses = Cpt(MultiDerivedSignalRO, attrs=['laser_divisor', 'goose_divisor'], calculate_on_get=_get_overlap)
+    goose_delay = Cpt(MultiDerivedSignalRO, attrs=['carbide_pp_tpr.delay_ticks', 'goose_tpr.delay_ticks', 'sys_clk'], calculate_on_get=_get_goose_delay)
+    
+    def summary(self, log=False, **kwargs):
+        """
+        Get the settings of the laser timing TPR.
+        
+        Parameters:
+        ---------------
+        log - booleam to log the positions in the elog
+        msg - optional argument to append a message to the elog with the positions.
+        tag - tags to add to the elog post. 
+        """
+        timingDict = {'Base Rate:':self.carbide_pp_tpr.eventrate.get()/0.98,
+                      'Base Sequence Code:': str(self.carbide_pp_tpr.seqcode.get()),
+                      'Goose Rate:':self.goose_tpr.eventrate.get()/0.98,
+                      'Goose Sequence Code:': str(self.goose_tpr.seqcode.get()),
+                      'Goose Delay [ns]:':self.goose_delay.get(),
+                      'Goose Frequency [pulses]:':self.goose_freq_pulses.get(),
+                      'Goose Eanble:': bool(self.carbide_pp_tpr.operation.get())
+                      }
+        kwargs['tags'] = kwargs.get('tags', ' ') + ' laser_trigger'
+        _log_positions(timingDict, log, **kwargs)
+        
+        
+laser_tpr = LaserTpr('LAS:LHN:TPR:01', name='laser_tpr')
+
+
+def get_laser_tpr(log=False, **kwargs):
+    """
+    Get the settings of the laser timing TPR.
+    
+    Parameters:
+    ---------------
+    log - booleam to log the positions in the elog
+    msg - optional argument to append a message to the elog with the positions.
+    tag - tags to add to the elog post. 
+    """
+    laser_tpr.summary(log, **kwargs)
+    
+"""
+    lcls_base_rate=928571.4286
+    laser_base_rate=carbide_pp_tpr.eventrate.get()/0.98
+    laser_divisor = round(lcls_base_rate/laser_base_rate)
+    goose_rate=goose_tpr.eventrate.get()/0.98
+    goose_divisor = round(lcls_base_rate/goose_rate)
+    overlap_divisor = np.lcm(laser_divisor,goose_divisor)
+    overlap_percent = laser_divisor/goose_divisor
+    goose_delay_ticks = goose_tpr.delay_ticks.get() - carbide_pp_tpr.delay_ticks.get()
+    goose_delay = goose_delay_ticks * (1/185.714286E-3)
+    
+    timingDict = {'Base Rate':laser_base_ra""te,
+                  'Base Sequence Code': str(carbide_pp_tpr.seqcode.get()),
+                  'Goose Rate':goose_rate,
+                  'Goose Sequence Code': str(goose_tpr.seqcode.get()),
+                  'Goose Delay [ns]':goose_delay,
+                  'Laser/Goose Overlap':1/overlap_percent
+                  }
+    kwargs['tags'] = kwargs.get('tags', ' ') + ' laser_trigger'
+    _log_positions(timingDict, log, **kwargs)
+    
+"""

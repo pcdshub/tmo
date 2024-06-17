@@ -1,11 +1,29 @@
 import logging
 import numpy as np
 import time
-from tmo.bykiks import bykiks
-from tmo.db import motors, RE, bp, bps
+from ophyd.status import DeviceStatus
+from tmo.bykiks import bykiks, Bykiks
+from tmo.db import motors, RE, bp, bps, daq
 from elog import HutchELog as elog_temp
 elog = elog_temp.from_registry()
 logger = logging.getLogger(__name__)
+
+class BykiksBurst(Bykiks):
+    
+    def configure(self, events, daq=daq):
+        self._daq = daq
+        self.burst_mode_enable.put(1)
+        self.shots_to_burst.put(events)
+        
+    def trigger(self):
+        with self._daq.daqState_cv:
+            while self.daq.daqState != 'running':
+                self.daq.daqState_cv.wait(0.1)   
+        logger.info('Burst Enable')
+        self.request_burst.put(1) #request burst
+        return DeviceStatus(self, done=True, success=True)
+
+bykiks_burst = BykiksBurst('', name='bykiks_burst', read_attrs=['burst_mode_enable'])
 
 def x_scan_old(daq, x_motor, start, step, nstep, nevents_step, record=True, restore=True, y_motor=None, book_end=50):
     """

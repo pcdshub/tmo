@@ -9,8 +9,6 @@ import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
 
-#from tmo.mirror_check import MirrorCheck
-#from tmo.mirrors import mirrors
 
 def get_KB1(log=False, msg=None, save_bender_preset=None, preset_type='exp', **kwargs):
     """
@@ -29,6 +27,19 @@ def get_KB1(log=False, msg=None, save_bender_preset=None, preset_type='exp', **k
     preset_type : str, optional
         Str to specify if the preset is associated with the 'hutch' or the current 'exp'eriment. The default is 'exp'.
     """
+    def _update_presets(save_bender_preset, msg):
+        bender_list = [mr2k4_kbo.bender_us, mr2k4_kbo.bender_ds, mr3k4_kbo.bender_us, mr3k4_kbo.bender_ds]
+        for bender in bender_list:
+            if preset_type == 'exp':
+                bender.presets.add_here_exp(name=save_bender_preset, comment=msg)
+            elif preset_type == 'hutch':
+                bender.presets.add_here_hutch(name=save_bender_preset, comment=msg)
+            else:
+                logger.error('preset_type not recognizied. Should be "exp" or "hutch".')
+                return None
+        msg = 'Update ' + save_bender_preset + ' for '+preset_type+' with current bender positions. \n'
+        return msg
+            
     curr_positions= {}
     for keys in dir(mr2k4_kbo):
         motor = getattr(mr2k4_kbo, keys)
@@ -41,25 +52,12 @@ def get_KB1(log=False, msg=None, save_bender_preset=None, preset_type='exp', **k
     kwargs['tags'] = 'kbo1 ' + kwargs.get('tags', ' ')  
 
     if save_bender_preset is not None:
-        log = True
-        if preset_type == 'exp':
-            mr2k4_kbo.bender_us.presets.add_here_exp(name=save_bender_preset, comment=msg)
-            mr2k4_kbo.bender_ds.presets.add_here_exp(name=save_bender_preset, comment=msg)
-            mr3k4_kbo.bender_us.presets.add_here_exp(name=save_bender_preset, comment=msg)
-            mr3k4_kbo.bender_ds.presets.add_here_exp(name=save_bender_preset, comment=msg)
+        update_msg = _update_presets(save_bender_preset, msg)
+        if update_msg is not None:
+            log = True
             kwargs['tags'] = kwargs.get('tags', ' ') + ' presets'
-            msg = 'Update ' + save_bender_preset + ' for experiment with current bender positions. \n' + (msg or '')
-        elif preset_type == 'hutch':
-            mr2k4_kbo.bender_us.presets.add_here_hutch(name=save_bender_preset, comment=msg)
-            mr2k4_kbo.bender_ds.presets.add_here_hutch(name=save_bender_preset, comment=msg)
-            mr3k4_kbo.bender_us.presets.add_here_hutch(name=save_bender_preset, comment=msg)
-            mr3k4_kbo.bender_ds.presets.add_here_hutch(name=save_bender_preset, comment=msg)
-            kwargs['tags'] = kwargs.get('tags', ' ') + ' presets'
-            msg = 'Update ' + save_bender_preset + ' for hutch with current bender positions. \n' + (msg or '')
-        else:
-            logger.error('preset_type not recognizied. Should be "exp" or "hutch".')
-
-    _log_positions(curr_positions, log, msg, **kwargs) 
+        msg = update_msg + (msg or '')
+    _log_positions(curr_positions, log, msg, **kwargs)        
 
 def set_KB1(bender_preset=None):
     """
@@ -70,19 +68,13 @@ def set_KB1(bender_preset=None):
     bender_preset : str, optional
         name of preset position. The default is None.
     """
+    bender_list = [mr2k4_kbo.bender_us, mr2k4_kbo.bender_ds, mr3k4_kbo.bender_us, mr3k4_kbo.bender_ds]
     if bender_preset is not None:
-        if ( hasattr(mr2k4_kbo.bender_us.presets.positions, bender_preset) and 
-             hasattr(mr2k4_kbo.bender_ds.presets.positions, bender_preset) and
-             hasattr(mr3k4_kbo.bender_us.presets.positions, bender_preset) and
-             hasattr(mr3k4_kbo.bender_ds.presets.positions, bender_preset) ):
-            mv1=getattr(mr2k4_kbo.bender_us, ('umv_'+bender_preset))
-            mv2=getattr(mr2k4_kbo.bender_ds, ('umv_'+bender_preset))
-            mv3=getattr(mr3k4_kbo.bender_us, ('umv_'+bender_preset))
-            mv4=getattr(mr3k4_kbo.bender_ds, ('umv_'+bender_preset))
-            mv1()
-            mv2()
-            mv3()
-            mv4()
+        if any(hasattr(b.presets.positions, bender_preset) for b in bender_list):
+            get_KB1(log=True, msg='KB1 position before moving to preset position ' +bender_preset)
+            for bender in bender_list:
+                umv = getattr(bender, 'umv_'+bender_preset)
+                umv()
             get_KB1(log=True, msg=('Move KB1 to preset position '+bender_preset))
         else:
             logger.error('One of the motors is missing the desired state.')
@@ -95,10 +87,8 @@ def set_KB1(bender_preset=None):
                       + list(vars(mr3k4_kbo.bender_ds.presets.positions).keys()) ):
             if state not in state_dict["State:"]:
                 state_dict["State:"].append(state)
-                state_dict[mr2k4_kbo.bender_us.name].append(vars(mr2k4_kbo.bender_us.presets.positions).get(state, ' '))
-                state_dict[mr2k4_kbo.bender_ds.name].append(vars(mr2k4_kbo.bender_ds.presets.positions).get(state, ' '))
-                state_dict[mr3k4_kbo.bender_us.name].append(vars(mr3k4_kbo.bender_us.presets.positions).get(state, ' '))
-                state_dict[mr3k4_kbo.bender_ds.name].append(vars(mr3k4_kbo.bender_ds.presets.positions).get(state, ' '))
+                for bender in bender_list:
+                    state_dict[bender.name].append(vars(bender.presets.positions).get(state, ' '))
         print (pd.DataFrame(state_dict))
             
         
@@ -148,7 +138,7 @@ def get_mr1k4(log=False, msg=None, **kwargs):
     kwargs['tags'] = kwargs.get('tags', ' ') + ' mr1k4'        
     _log_positions(curr_positions, log, msg, **kwargs)
         
-def get_slits(slits=sl1k4, log=False, msg=None, **kwargs):
+def get_slits(slits=sl1k4, log=False, msg=None, update_preset=False, **kwargs):
     """
     Get the current position of slits in the beamline, and optionally add to the elog. 
 
@@ -160,22 +150,54 @@ def get_slits(slits=sl1k4, log=False, msg=None, **kwargs):
         boolean to log the positions in the elog. The default is False.
     msg : str, optional
         optional argument to append a message to the elog with the fzp positions. The default is None.
+    update_preset : bool, optional
+        update the tmo preset positions for sl2k0 and sl1k4 to the current position. 
     tag : str, optional
         List of tags to add to an elog post, by default the slit name is tagged
     """
+    
+    def _update_presets(slits):
+        if slits.name == 'sl1k0':
+            logger.error('no preset for sl1k0')
+            return None
+        else:
+            old_pos=OrderedDict()
+            new_pos=OrderedDict() 
+            for slits in [sl2k0,sl1k4]:
+                for axis in ['north','south','top','bottom']:
+                    motor = getattr(slits, axis)
+                    old_pos[motor.name] = motor.presets.positions.tmo
+                    motor.presets.add_here_hutch(name='tmo')
+                    new_pos[motor.name] = motor.position
+                    updateDF = pd.DataFrame({"Axis:": old_pos.keys(), "Old Preset:": old_pos.values(), "New Preset:": new_pos.values()})
+                    update_msg = "Update tmo preset positions for slits. \n" + updateDF.to_string()
+        return update_msg
+    
     curr_positions= {}
     for keys in dir(slits):
         motor = getattr(slits, keys)
         if hasattr(motor, 'position'):
             curr_positions[motor.name] = getattr(motor, 'position')
-#    curr_positions= {
-#     slits.name+" x-center":slits.xcenter.position,
-#     slits.name+" x-width":slits.xwidth.position,
-#     slits.name+" y-center":slits.ycenter.position,
-#     slits.name+" y-width":slits.ywidth.position,
-#    }
     kwargs['tags'] = kwargs.get('tags', ' ') + ' ' + slits.name        
-    _log_positions(curr_positions, log, msg, **kwargs)    
+    if update_preset:
+        update_msg = _update_presets(slits)
+        if update_msg is not None:
+            log=True
+            kwargs['tags'] = kwargs.get('tags', ' ') + ' ' + 'update_preset'
+            if (msg is not None):
+                msg = msg + "\n" + update_msg
+            else:
+                msg = update_msg
+    _log_positions(curr_positions, log, msg, **kwargs)
+
+def reset_slits(preset='tmo'):
+    for slits in [sl2k0,sl1k4]:
+        get_slits(slits, log=True, msg='current slit positions before moving to tmo preset.')
+        for axis in ['north','south','top','bottom']:
+            motor = getattr(slits, axis)
+            umv = getattr(motor, 'umv_'+preset)
+            umv()
+        get_slits(slits, log=True, msg=('Move '+slits.name+' to previous tmo preset position'))
 
 def get_fzp(log=False, msg=None, **kwargs):
     """
@@ -218,45 +240,3 @@ def fix_wfs():
 #    sync_limits = (-100, 100)
 #
 #sp1k4_ymc = SP1K4ymc('', name='sp1k4_ymc')
-
-#Moved to mirror_check.py
-
-'''
-def check_kbo1_transmission(output_path ="/reg/g/pcds/pyps/apps/hutch-python/tmo/tmo/mirror-check", scan_duration = 60.0):
-     """
-     perform transmission check for TMO KBO1 mirror using im3k4 and im4k4 power meters.
-
-     Parameters
-     ----------
-     output_path : str, optional
-         DESCRIPTION. The default is "/reg/g/pcds/pyps/apps/hutch-python/tmo/tmo/mirror-check".
-     scan_duration : float, optional
-         DESCRIPTION. The default is 60.0.
-
-     Returns
-     -------
-     None.
-
-     """
-     kbo1=MirrorCheck(mirrors["TMO_KBO1"], output_path, scan_duration)
-     kbo1.start_test()
-
-def check_kbo2_transmission(output_path ="/reg/g/pcds/pyps/apps/hutch-python/tmo/tmo/mirror-check", scan_duration = 60.0):
-     """
-     perform transmission check for TMO KBO2 mirror using im5k4 and im6k4 power meters.
-
-     Parameters
-     ----------
-     output_path : str, optional
-         DESCRIPTION. The default is "/reg/g/pcds/pyps/apps/hutch-python/tmo/tmo/mirror-check".
-     scan_duration : float, optional
-         DESCRIPTION. The default is 60.0.
-
-     Returns
-     -------
-     None.
-
-     """
-     kbo2=MirrorCheck(mirrors["TMO_KBO2"], output_path, scan_duration)
-     kbo2.start_test()
-'''
