@@ -30,7 +30,7 @@ import os
 import sys
 import time
 
-import elog
+# import elog
 import h5py
 import numpy as np
 from ophyd.signal import EpicsSignalRO
@@ -43,7 +43,7 @@ from tmo.mirrors import mirrors
 
 logging.basicConfig(level=logging.INFO)
 
-from mirror_check_analysis import calc_transmission
+from tmo.mirror_check_analysis import calc_transmission
 
 class MirrorCheck:
     """
@@ -226,7 +226,7 @@ class MirrorCheck:
         logging.info("step #4: Place power meter before mirror in")
         # self._mirror.imager_before.target("POWERMETER", wait=True)
         self.move_ppm(self._mirror.imager_before, "POWERMETER",
-                      self._signals.kfe_rate, 10.0)
+                      self._signals.kfe_rate, 30.0)
 
         logging.info(
             f"step #5: collect data from imager before mirror for +\
@@ -259,7 +259,7 @@ class MirrorCheck:
         logging.info("step #7: Place power meter after mirror in")
         # self._mirror.imager_after.target("POWERMETER", wait=True)
         self.move_ppm(self._mirror.imager_after, "POWERMETER",
-                      self._signals.kfe_rate, 10.0)
+                      self._signals.kfe_rate, 30.0)
 
         logging.info(
             f"step #8: collect data from imager after  mirror for +\
@@ -313,12 +313,12 @@ class MirrorCheck:
         
         # Read the time-series, instead of the time-average,
         # to calculate the transmission
-        ppm_after = data_after[
+        ppm_after = np.asarray(data_after[
             f"{self._mirror.imager_after.name}_power_meter_raw_voltage_buffer"
-        ]
-        ppm_before = data_before[
+        ])
+        ppm_before = np.asarray(data_before[
             f"{self._mirror.imager_before.name}_power_meter_raw_voltage_buffer"
-        ]
+        ])
         gmd_avg_before = data_before["kfe_signals_kfe_gmd_avg_int"]  
         gmd_avg_after = data_after["kfe_signals_kfe_gmd_avg_int"]      # noqa: E501
         
@@ -354,7 +354,7 @@ class MirrorCheck:
             self.save_dict_to_hdf5(hdf5_file, data)
 
         logging.info("Data saved to {} successfully.".format(hdf5_file_path))
-
+        '''
         logging.info("step #13: post scan results to elog")
         elog_obj = elog.HutchELog.from_registry()
         elog_obj.post(
@@ -364,6 +364,7 @@ class MirrorCheck:
             title="Mirror check",
             tags=[self._mirror.name],
         )
+        '''
 
         logging.info("step #14: save result to PV")
         self._mirror.transmission.put(transmission)
