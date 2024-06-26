@@ -56,10 +56,10 @@ def calc_transmission(pwr_a, pwr_b, g_a, g_b, logging=None):
         
     pwr_a_mean = pwr_a.mean()
     pwr_b_mean = pwr_b.mean()
-    g_a_mean = g_a.mean()
-    g_b_mean = g_b.mean()
+    g_a_mean = np.mean(g_a)
+    g_b_mean = np.mean(g_b)
     transm = pwr_a_mean / pwr_b_mean * g_b_mean / g_a_mean
-    relstderr = [x.std(ddof=1)/x.mean() for x in [pwr_a, pwr_b, g_a, g_b]]
+    relstderr = [np.std(x,ddof=1)/np.mean(x) for x in [pwr_a, pwr_b, g_a, g_b]]
     # for x in [pwr_a, pwr_b]:
     #     relstderr.append(dac_err_std/np.sqrt(len(x))/x.mean())
     relstderr = np.sum(np.array(relstderr)**2)**0.5
