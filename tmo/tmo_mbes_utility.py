@@ -3,7 +3,8 @@ from pcdsdevices.epics_motor import EpicsMotorInterface
 from ophyd.signal import EpicsSignal, EpicsSignalRO
 from pcdsdevices.interface import BaseInterface
 from ophyd.device import Component as Cpt, Device
-from pcdsdevices.value import VCN_VAT590
+from pcdsdevices.valve import VCN_VAT590
+from tmo.tmo_beamline_control import _log_positions
 #from elog import HutchELog as elog_temp
 #elog = elog_temp.from_registry()
 import time as time
@@ -14,33 +15,121 @@ import json
 from epics import caget, caput, cainfo
 
 
-default_voltages = {
-#"Coil_1_Ret":0,
-#"Coil_2_Ret":0,
-"Coil_Bias":-50,
-"MBES_FT_Lens":0,
-"MBES_IP_Lens":0,
-"Ion_ToF_FT":-4650,
-"Ion_ToF_MCP_B":-3800,
-"Ion_ToF_MCP_F":-4850,
-"Ion_ToF_PMT":-650,
-"Ion_ToF_Scint":-1500,
-"MBES_MCP_Back":100,
-"MBES_MCP_Front":100,
-"MBES_Grid":0,
-"Magnet":-178,
-#"Needle":0
-}
+# default_voltages = {
+# #"Coil_1_Ret":0,
+# #"Coil_2_Ret":0,
+# "coil_bias":-50,
+# "mbes_ft_lens":0,
+# "mbes_ip_lens":0,
+# "ion_tof_flight_tube":-4650,
+# "ion_tof_mcp_b":-3800,
+# "ion_tof_mcp_f":-4850,
+# "ion_tof_pmt":-700,
+# "ion_tof_scint":-1500,
+# "mbes_mcp_back":100,
+# "mbes_mcp_f":100,
+# "mbes_mcp_grid":0,
+# "magnet":-178,
+# #"Needle":0
+# }
 
-tmo_lamp_vcn = VCN_VAT590('LAMP:VCN:01:', name='tmo_lamp_vcn')
-def get_lamp_vcn(log=False):
-    valve_state = ['ManualControl', 'CloseValve', 'OpenValve', 'PressureControl', 'HoldValve']
-    status_dict={
-        'control mode': valve_state[tmo_lamp_vcn.state.get()],
-        'pressure setting (10-8 torr)': tmo_lamp_vcn.pres_reg.get()*1E8,
-        'pressure reading (10-8 torr)': tmo_lamp_vcn.pres_torr.get()*1E8,
-        'position setting': tmo_lamp_vcn.pos_raw.get()
-        }
+with open('/reg/g/pcds/pyps/apps/hutch-python/tmo/tmo/tmo_mpod_configs/voltages_mbes.json', 'r') as f:
+    default_voltages = json.load(f)
+
+class LampVCN(BaseInterface, Device):
+    """
+    LAMP remote controled leak valve. 
+    """
+    tab_component_names = True
+    tab_whitelist = ['open_valve', 'close_valve','set_manual_cntl','set_pres_cntl','status']
+
+
+    valve = Cpt(VCN_VAT590, 'LAMP:VCN:01:' )
+    
+    def open_valve(self):
+        """
+        Open the valve to the opening limit
+        """
+        self.valve.state.put(2)
+        
+    def close_valve(self):
+        """
+        Close the valve
+        """
+        self.valve.state.put(1)
+        
+    def set_manual_cntl(self, set_point=0):
+        """
+        Set the valve to manual control and open to set_point
+
+        Parameters
+        ----------
+        set_point : float, optional
+            Percentage to open the valve. The default is 0.
+
+        """
+        self.valve.pos_req.put(0)
+        self.valve.state.put(0)
+        self.valve.pos_req.put(set_point)
+        
+    def set_pres_cntl(self, set_point=0):
+        """
+        Set the valve to pressure control and set the control pressure to set_point
+
+        Parameters
+        ----------
+        set_point : float, optional
+            Pressure setpoint in Torr. The default is 0.
+
+        """
+        self.valve.pres_req.put(0)
+        self.valve.state.put(3)
+        self.valve.pres_req.put(set_point)
+        
+    def status(self, log=False, msg=None, **kwargs):
+        """
+        Print the status of the valve
+
+        Parameters
+        ----------
+        log : boll, optional
+            Flag to post the status to elog. The default is False.
+        msg : str, optional
+            Message to include in elog post. The default is None.
+        run : int, optional
+            Associate the post with a specific run
+        tags : list, optional
+            List of tags to add to the post
+
+        """
+        valve_states = ['ManualControl', 'CloseValve', 'OpenValve', 'PressureControl', 'HoldValve']
+        status_dict={
+            'control mode': valve_states[self.valve.state.get()],
+            'pressure setting (10-8 torr)': self.valve.pres_req.get()*1E8,
+            'pressure reading (10-8 torr)': self.valve.pres_torr.get()*1E8,
+            'position setting': self.valve.pos_raw.get()
+            }
+        _log_positions(status_dict, log, msg, **kwargs)
+       
+tmo_lamp_vcn = LampVCN('',name='tmo_lamp_vcn')
+
+def get_lamp_vcn(log=False, msg=None, **kwargs):
+        """
+        Print the status of the remote controlled VAT-590 valve
+
+        Parameters
+        ----------
+        log : boll, optional
+            Flag to post the status to elog. The default is False.
+        msg : str, optional
+            Message to include in elog post. The default is None.
+        run : int, optional
+            Associate the post with a specific run
+        tags : list, optional
+            List of tags to add to the post
+
+        """
+        tmo_lamp_vcn.status(log, msg, **kwargs)
 
 class PDU(BaseInterface, Device):
     tab_component_names= True
@@ -57,7 +146,7 @@ class PDU(BaseInterface, Device):
     def off(self):
         self._on_switch.put(1)
 
-ortec_ps = PDU('TMO:PWR:01:Outlet:6', name='ortec_ps')
+ortec_ps = PDU('TMO:PWR:CVMI:Outlet:3', name='ortec_ps')
 
 
 class mbes_Voltage_utility(): 
@@ -112,7 +201,7 @@ class mbes_Voltage_utility():
         """
         Turns on all components listed in the voltage settings
         """
-
+        tmo_mpod.clear_faults_all()
         mpod_keys = self.voltage_settings
         for keys in mpod_keys:
             mpodOn = getattr(tmo_mpod, keys)
@@ -123,11 +212,13 @@ class mbes_Voltage_utility():
         """
         Turns off all components listed in the voltage settings.
         """
+        self.amplifier('OFF')
         mpod_keys = self.voltage_settings
         for keys in mpod_keys:
             mpodOn = getattr(tmo_mpod, keys)
             print('Turning off %s'%keys)
             mpodOn.off()
+        tmo_mpod.clear_faults_all()
 
     def amplifier(self, state='ON'):
         
@@ -141,9 +232,11 @@ class mbes_Voltage_utility():
         
         if state=='ON':
             ortec_ps.on() #caput('TMO:PWR:01:Outlet:6:TurnOn', 1)
+            caput('TMO:USR:BHC:BOUT:1', 1)
             time.sleep(3)
         elif state=='OFF':
             ortec_ps.off()#caput('TMO:PWR:01:Outlet:6:TurnOff', 1)
+            caput('TMO:USR:BHC:BOUT:1', 0)
             time.sleep(3)
             
     def set_to_zero_ion(self):
@@ -153,11 +246,67 @@ class mbes_Voltage_utility():
         """
         
         self.amplifier('OFF')
+        
+        
+        for k in self.ion_keys:
+            if 'flight_tube'.casefold() in k.casefold():
+                self.ion_FT = getattr(tmo_mpod, k)
+                ion_FTVoltage = self.voltage_settings[k]
+                
+            elif 'mcp_b'.casefold() in k.casefold():
+                self.ion_mcpBack = getattr(tmo_mpod, k)
+                ion_mcpBackVoltage = self.voltage_settings[k]
+                
+            elif 'mcp_f'.casefold() in k.casefold():
+                self.ion_mcpFront = getattr(tmo_mpod, k)
+                ion_mcpFrontVoltage = self.voltage_settings[k]
+                
+            elif 'pmt'.casefold() in k.casefold():
+                self.ion_pmt= getattr(tmo_mpod, k)
+                pmtVoltage = self.voltage_settings[k]
+                
+            elif 'scint'.casefold() in k.casefold():
+                self.ion_scn= getattr(tmo_mpod, k)
+                scintillatorVoltage = self.voltage_settings[k]
+            
+        
+        self.ion_pmt.voltage.put(0)
+        if abs(scintillatorVoltage) > abs(pmtVoltage):
+            self.ion_scn.voltage.put(scintillatorVoltage - pmtVoltage)
+            self.ion_mcpFront.voltage.put(ion_mcpFrontVoltage - pmtVoltage)
+            self.ion_mcpBack.voltage.put(ion_mcpBackVoltage - pmtVoltage)
+            self.ion_FT.voltage.put(ion_FTVoltage - pmtVoltage)
+        
+        time.sleep(4)
+        
+
+        self.ion_scn.voltage.put(0)
+        
+        if abs(ion_mcpFrontVoltage ) > abs(scintillatorVoltage):
+            self.ion_mcpFront.voltage.put(ion_mcpFrontVoltage - scintillatorVoltage)
+            self.ion_mcpBack.voltage.put(ion_mcpBackVoltage - scintillatorVoltage)
+            self.ion_FT.voltage.put(ion_FTVoltage - scintillatorVoltage)
+
+        time.sleep(4)
+        
+        
+        self.ion_mcpFront.voltage.put(0)
+        
+        if abs(ion_mcpBackVoltage ) > abs(ion_mcpFrontVoltage):
+            self.ion_mcpBack.voltage.put(ion_mcpBackVoltage - ion_mcpFrontVoltage)
+            self.ion_FT.voltage.put(ion_FTVoltage - ion_mcpFrontVoltage)
+
+        time.sleep(8)
+        
+
+        
         for keys in self.ion_keys:
             voltObj = getattr(tmo_mpod, keys)
             self.ramp_volt(voltObj, 0)
-        voltObj = getattr(tmo_mpod, 'Magnet')
+        voltObj = getattr(tmo_mpod, 'magnet')
         self.ramp_volt(voltObj, 0)
+
+
 
     def set_to_zero_electron(self):
         
@@ -169,6 +318,7 @@ class mbes_Voltage_utility():
         for keys in self.electron_keys:
             voltObj = getattr(tmo_mpod, keys)
             self.ramp_volt(voltObj, 0)
+        tmo_mpod.clear_faults_all()
         
     def wait_self(self, volt_object, voltageToCheck):
         """
@@ -226,7 +376,7 @@ class mbes_Voltage_utility():
         """
                 
         
-        vstep = np.int(np.round((final - initial)/stepSize))
+        vstep = int(np.round((final - initial)/stepSize))
         volt_steps = np.linspace(initial, final, np.abs(vstep))
         return volt_steps
     
@@ -240,7 +390,7 @@ class mbes_Voltage_utility():
         self.amplifier('OFF')
         time.sleep(1)
         for k in self.ion_keys:
-            if 'ft'.casefold() in k.casefold():
+            if 'flight_tube'.casefold() in k.casefold():
                 self.ion_FT = getattr(tmo_mpod, k)
                 ion_FTVoltage = self.voltage_settings[k]
                 
@@ -262,13 +412,14 @@ class mbes_Voltage_utility():
             
         
         self.ion_pmt.voltage.put(pmtVoltage)
-        self.ion_scn.voltage.put(pmtVoltage)
+        #self.ion_scn.voltage.put(pmtVoltage)  #The PS only can do +ve 06/21/26
+        self.ion_scn.voltage.put(0)
         self.ion_mcpFront.voltage.put(pmtVoltage)
         self.ion_mcpBack.voltage.put(pmtVoltage)
         self.ion_FT.voltage.put(pmtVoltage)
         
         self.wait_self(self.ion_FT, pmtVoltage)
-        
+        """        
         #ramping everything scintillator onwards to Ion Flightube############
 
         volt_steps = self.voltageStepSize(pmtVoltage, scintillatorVoltage, 50)
@@ -279,10 +430,13 @@ class mbes_Voltage_utility():
             self.ramp_volt(self.ion_mcpFront, volts, 0)
             self.ramp_volt(self.ion_mcpBack, volts, 0)
             self.ramp_volt(self.ion_FT, volts, 1)
+        """
         self.ramp_volt(self.ion_scn, scintillatorVoltage)
         ######################################################################    
         
-        volt_steps = self.voltageStepSize(scintillatorVoltage, ion_mcpBackVoltage, 50)
+
+        #volt_steps = self.voltageStepSize(scintillatorVoltage, ion_mcpBackVoltage, 50)
+        volt_steps = self.voltageStepSize(pmtVoltage, ion_mcpBackVoltage, 50)
         print('Step 1')
         #print(volt_steps)
         for volts in volt_steps:
@@ -311,7 +465,7 @@ class mbes_Voltage_utility():
             self.ramp_volt(self.ion_FT, ion_FTVoltage, 1)
         
         for k in self.electron_keys:
-            if 'Magnet'.casefold() in k.casefold():
+            if 'magnet'.casefold() in k.casefold():
                 self.ion_magnet = getattr(tmo_mpod, k)
                 ion_magnetVoltage = self.voltage_settings[k]
         self.ramp_volt(self.ion_magnet, ion_magnetVoltage, 1)
@@ -342,11 +496,11 @@ class mbes_Voltage_utility():
         mcp_gridVoltage = ret
         
         for k in self.electron_keys:
-            if 'Front'.casefold() in k.casefold():
+            if 'mcp_f'.casefold() in k.casefold():
                 self.electron_mcpFront = getattr(tmo_mpod, k)
                 electron_mcpFrontVoltage = self.voltage_settings[k]
                 
-            elif 'Back'.casefold() in k.casefold():
+            elif 'back'.casefold() in k.casefold():
                 self.electron_mcpBack = getattr(tmo_mpod, k)
                 electron_mcpBackVoltage = self.voltage_settings[k]
                 
@@ -354,11 +508,11 @@ class mbes_Voltage_utility():
                 self.electron_mcpGrid = getattr(tmo_mpod, k)
                 electron_mcpGridVoltage = mcp_gridVoltage
                 
-            elif 'FT'.casefold() in k.casefold():
+            elif 'ft_lens'.casefold() in k.casefold():
                 self.electron_FT= getattr(tmo_mpod, k)
                 electron_FTVoltage = FT_lensVoltage
                 
-            elif 'IP'.casefold() in k.casefold():
+            elif 'ip'.casefold() in k.casefold():
                 self.electron_IP= getattr(tmo_mpod, k)
                 electron_IPVoltage = self.voltage_settings[k]
                 
@@ -371,11 +525,11 @@ class mbes_Voltage_utility():
 #                 self.electron_coil_2 = getattr(tmo_mpod, k)
 #                 electron_coil_2_Voltage = coil_bias
 # =============================================================================
-            elif 'Coil_Bias'.casefold() in k.casefold():
+            elif 'coil_bias'.casefold() in k.casefold():
                 self.electron_coil_1 = getattr(tmo_mpod, k)
                 electron_coil_1_Voltage = coil_bias
 
-            elif 'Needle'.casefold() in k.casefold():
+            elif 'needle'.casefold() in k.casefold():
                 self.needle = getattr(tmo_mpod, k)
                 electron_needleVoltage = self.voltage_settings[k]
         
@@ -383,6 +537,7 @@ class mbes_Voltage_utility():
         mcpBack_Read = np.round(self.get_volt(self.electron_mcpBack))
         mcpFront_Read = np.round(self.get_volt(self.electron_mcpFront))
         mcpDiff = mcpBack_Read - mcpFront_Read
+        print(mcpDiff)
         
         if mcpDiff < 1:
             mcpDiff = 1000
@@ -395,6 +550,7 @@ class mbes_Voltage_utility():
         self.amplifier(state='OFF')
         time.sleep(2)                  # turn off amlifier Step 2 and 3
         #step 4, 5, 6
+        print('Starting ramping mcps, coil, and grid...')
         if np.abs(ret) < np.abs(ret_Read):
             self.ramp_volt(self.electron_FT, electron_FTVoltage, 0)
             self.ramp_volt(self.electron_mcpGrid, electron_mcpGridVoltage, 0)
@@ -435,9 +591,9 @@ class mbes_Voltage_utility():
         
         self.ramp_ion()
         
-        voltObjMaG = getattr(tmo_mpod, 'Magnet')
+        voltObjMaG = getattr(tmo_mpod, 'magnet')
         for k in self.electron_keys:
-            if 'IP'.casefold() in k.casefold():
+            if 'ip'.casefold() in k.casefold():
                 voltObjIP = getattr(tmo_mpod, k)
         magnetVal = voltObjMaG.voltage.setpoint
         IPVal = voltObjIP.voltage.setpoint
@@ -449,11 +605,11 @@ class mbes_Voltage_utility():
     def electron_mcp_diff(self, mcpDiff=1000):
         
         for k in self.electron_keys:
-            if 'Front'.casefold() in k.casefold():
+            if 'f'.casefold() in k.casefold():
                 self.electron_mcpFront = getattr(tmo_mpod, k)
                 electron_mcpFrontVoltage = self.voltage_settings[k]
                 
-            elif 'Back'.casefold() in k.casefold():
+            elif 'back'.casefold() in k.casefold():
                 self.electron_mcpBack = getattr(tmo_mpod, k)
                 electron_mcpBackVoltage = self.voltage_settings[k]
                 

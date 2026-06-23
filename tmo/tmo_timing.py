@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 #import time
 from scipy.signal import find_peaks
-
+#
 threshold_sigma = 6;
 CFD_walk = 1;
 traces_to_average = 100; 

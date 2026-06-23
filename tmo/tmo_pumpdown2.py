@@ -61,20 +61,42 @@ class TmoPumpDown():
             return
      
 
-    def _verify_connected(self):  
-        for keys in (self._pump_list['g1'] + self._pump_list['g2'] + self._gauge_list['g1'] + self._gauge_list['g2']):
-            device = getattr(self._hvac['g1'], keys)
-            if hasattr(device, 'connected'):
-                if not bool(device.connected):
-                    print(device.name, ' not connected \n')
-                    return False
-                for devices in (self._pump_list['inst'] + self._gauge_list['inst']):
-                    device = getattr(self._hvac['inst'], devices)
-                    if not bool(device.connected):
-                        print(device.name, ' not connected \n')
-                        return False
-                    return True 
-
+    def _verify_connected(self, diag=False):  
+        """ Verify all neccessary devices are connected."""
+        def _check_device(self, device, diag):
+            try:
+                device.wait_for_connection(all_signals=True, timeout=5)
+                if diag:
+                    print(device.name, ' connected')
+                return True
+            except TimeoutError:
+                print(device.name, ' not connected \n')
+                return False
+        
+        status = True      
+        for device_list_key in self._pump_list.keys():
+            for key in self._pump_list[device_list_key]:
+                device = getattr(self._hvac[device_list_key], key)
+                if hasattr(device, 'wait_for_connection'):
+                    connect = _check_device(self, device, diag)
+                    status = status and connect                   
+            for key in self._gauge_list[device_list_key]:
+                device = getattr(self._hvac[device_list_key], key)
+                if hasattr(device, 'wait_for_connection'):
+                    connect = _check_device(self, device, diag)
+                    status = status and connect
+        for device in dir(tmo_rough):
+            if 'vfv' in device:
+                continue
+            device = getattr(tmo_rough, device)
+            if hasattr(device, 'wait_for_connection'):
+                connect = _check_device(self, device, diag)
+                status = status and connect
+        for device in [self._ip_vrc_01,self._ip_vrc_02,self._ip_vrc_03]:
+            connect = _check_device(self, device, diag)
+            status = status and connect
+        return status
+    
     def _are_pumps_running(self, key, restart=False, at_speed=False):
         status=True
         for pump_name in self._pump_list[key]:
@@ -84,18 +106,18 @@ class TmoPumpDown():
                 pump_running = (pump_state == 2)    
             else:
                 pump_running = (pump_state == 1) or (pump_state == 2)    
-                if ( restart and ( (pump_state > 2) or (pump_state == 0) ) ):
-                     pump.switch_pump_on.put(1)
-                     print('Had to re-start ', pump.name)
-                     time.sleep(10)
-                     pump_state = pump.pump_state.get()
-                     pump_running = (pump_state == 1) or (pump_state == 2)
-                     status = status and (pump_running)
+            if ( restart and ( (pump_state > 2) or (pump_state == 0) ) ):
+                pump.switch_pump_on.put(1)
+                print('Had to re-start ', pump.name)
+                time.sleep(10)
+                pump_state = pump.pump_state.get()
+                pump_running = (pump_state == 1) or (pump_state == 2)
+            status = status and (pump_running)                
         return status
 
     def _are_pumps_stopping(self, key, stopped=False):
         status=True
-        for pump_name in self.pump_list[key]:
+        for pump_name in self._pump_list[key]:
             pump = getattr(self._hvac[key],pump_name)
             pump_state = pump.pump_state.get()
             if stopped:
@@ -105,7 +127,7 @@ class TmoPumpDown():
         return status
 
     def _start_pumps(self, key):
-        for pump_name in self.pump_list[key]:
+        for pump_name in self._pump_list[key]:
             pump = getattr(self._hvac[key], pump_name)
             pump.switch_pump_on.put(1)
             print("Starting ",pump.name)
@@ -216,7 +238,7 @@ class TmoPumpDown():
             return
     
         #check that ip1 is not at vac
-        if (bool(self.hvac['g1'].tmo_ip1_main_gauge.gauge_at_vac.get()) and not override_gauge):
+        if (bool(self._hvac['g1'].tmo_ip1_main_gauge.gauge_at_vac.get()) and not override_gauge):
             print('IP1 main gauge says it is already at vacuum.\n Try again with override_gauge=True')
             return    
 
@@ -256,11 +278,12 @@ class TmoPumpDown():
                 return    
 
         #open roughing bypass valve
-        if bool(self._ip_vrc_02.valve_position.get()):  #returns True if closed
+        if bool(self._ip_vrc_02.close_command.get()):  #returns True if closed
             print('IP bypass valve not open')
-            print('Opening bypass valve')
-            if not self._open_roughing_valve(self._ip_vrc_02):
-                return
+            print('opening bypass valve')
+            self._ip_vrc_02.close_command.put(0)
+#            if not self._open_roughing_valve(self._ip_vrc_02):
+#                return
 
         #close vent valves
         print('Closing Vent Valves (Rough1:VFV:02, Rough2:VFV:01).......')
@@ -326,7 +349,7 @@ class TmoPumpDown():
         
             #check if granite 1 gauges can start
             self._start_gauges(key='g1')
-            self._start_gauges(key='ints')
+            self._start_gauges(key='inst')
 
             if waiting > 120:
                 print('Failed to reach 2e-2 in Rough 1 after 20 minutes...\n')
@@ -381,16 +404,16 @@ class TmoPumpDown():
             if (waiting > 180):
                 print('Some pumps failed to reach full speed after 30 minutes!')
                 return 
-            print('All pumps at speed....')
+        print('All pumps at speed....')
 
         #reset roughing setpoints
         while (tmo_rough.tmo_rough1_gpi_02.pressure.get() > (0.95*min([self._lv_gauge_setpoint,self._pump_backing_setpoint]))):
             time.sleep(10)
  
-            self._change_valve_setpoint(tmo_rough.tmo_rough1_vrc_01, self._lv_gauge_setpoint)
-            self._change_valve_setpoint(tmo_rough.tmo_rough2_vrc_01, self._lv_gauge_setpoint)
-            self._change_pump_backing_setpoint(key='g1', setpoint=self._pump_backing_setpoint)
-            self._change_pump_backing_setpoint(key='inst', setpoint=self._pump_backing_setpoint)
+        self._change_valve_setpoint(tmo_rough.tmo_rough1_vrc_01, self._lv_gauge_setpoint)
+        self._change_valve_setpoint(tmo_rough.tmo_rough2_vrc_01, self._lv_gauge_setpoint)
+        self._change_pump_backing_setpoint(key='g1', setpoint=self._pump_backing_setpoint)
+        self._change_pump_backing_setpoint(key='inst', setpoint=self._pump_backing_setpoint)
 
         return
 
@@ -420,7 +443,7 @@ class TmoPumpDown():
             return
 
         # check IP1 at vacuum
-        if not bool(self._hvac.tmo_ip1_main_gauge.gauge_at_vac.get()):
+        if not bool(self._hvac['g1'].tmo_ip1_main_gauge.gauge_at_vac.get()):
             print('IP1 gauge is not at vacuum.')
             if (self._are_pumps_running(key='g1') and self._are_pumps_running(key='inst')):
                 print('Granite 1 and IP1 pumps are running. Starting gauges and continuing pump down.')
@@ -622,9 +645,9 @@ class TmoPumpDown():
             return
 
         #open roughing bypass valve
-        if bool(self._ip_vrc_02.valve_position.get()):  #returns True if closed
+        if bool(self._ip_vrc_02.close_command.get()):  #returns True if closed
             print('IP bypass valve not open')
-            print('Opening IP bypass valve. Try running script again.')
+            print('Open IP bypass valve. Try running script again.')
             return
 
         # close FEE gate valve
@@ -791,7 +814,7 @@ class TmoPumpDown():
             if (waiting > 180):
                 print('Some pumps failed to reach full speed after 30 minutes!')
                 return 
-            print('All pumps at speed....')
+        print('All pumps at speed....')
 
         #reset setpoints
         while (tmo_rough.tmo_rough1_gpi_02.pressure.get() > (0.95*min([self._lv_gauge_setpoint,self._pump_backing_setpoint]))):
@@ -809,14 +832,7 @@ class TmoPumpDown():
         return
 
     def vent_ip1(self):
-        """
-        Vent IP1 and Granite 1
-        
-        Parameters:
-        -----------
-        instrument : str 
-                     name of instrument installed in IP1 (MBES, MRCO, CVMI)
-        """    
+        """ Vent IP1 and Granite 1 """    
     
         #check that all required devices are connected
         if not self._verify_connected():
@@ -844,14 +860,7 @@ class TmoPumpDown():
         if bool(mr3k4_kbo_vfs_01.valve_position.get()):
             print('MR3K4 Fast valve is not open.')
             return
-    
-        #verify by-pass valve is open
-        if bool(self._ip_vrc_02.valve_position.get()):  #returns True if closed
-            print('IP bypass valve not open')
-            print('opening bypass valve')
-            if not self._open_roughing_valve(self._ip_vrc_02):
-                return
-    
+      
         #Stop Granite 1 Pumps
         print('Stopping Granite 1 pumps.....')
         self._stop_pumps(key='g1')
@@ -883,7 +892,17 @@ class TmoPumpDown():
         print('Stopping HV gauges.....')
         self._stop_gauges(key='g1')
         self._stop_gauges(key='inst')
+
+        #verify by-pass valve is open before venting
+        if bool(self._ip_vrc_02.close_command.get()):  #returns True if closed
+            print('IP bypass valve not open')
+            print('opening bypass valve')
+            self._ip_vrc_02.close_command.put(0)
+#            if not self._open_roughing_valve(self._ip_vrc_02):
+#                print('IP by-pass valve failed to open. Exiting procedure.')
+#                return        
     
+        print('Waiting for pumps to slow down....')    
         time.sleep(60)
         #Open VFV Vent Valve
         print('Opening Vent Valve Rough1:VFV:02....')
@@ -922,14 +941,7 @@ class TmoPumpDown():
         return
     
     def vent_granite_2(self):
-        """
-        Vent Granite 2 only
-        
-        Parameters:
-        -----------
-        instrument : str 
-                     name of instrument installed in IP1 (MBES, MRCO, CVMI)
-        """
+        """         Vent Granite 2 only        """
     
         #check that all required devices are connected
         if not self._verify_connected():
@@ -974,7 +986,8 @@ class TmoPumpDown():
         #Stop high vacuum gauges
         print('Stopping HV gauges.....')
         self._stop_gauges(key='g2')
-    
+
+        print('Waiting for pumps to slow down....')        
         time.sleep(60)
         #Open VFV Vent Valve
         print('Opening Vent Valve Rough1:VFV:03....')
@@ -1010,6 +1023,45 @@ class TmoPumpDown():
         print('Granite 2 vented.')
         return
 
+    def close_ip1_by_pass(self):
+        """"Temporary function to deal with faulty logic and close the by-pass valve"""
+        #close the by-pass valve
+        self._ip_vrc_02.error_reset.put(1)
+        self._ip_vrc_02.override_on.put(1)
+        self._ip_vrc_02.close_command.put(1)
+        self._ip_vrc_02.override_force_close.put(1)
+        
+        #open rough2_vrc_01
+        tmo_rough.tmo_rough2_vrc_01.error_reset.put(1)
+        tmo_rough.tmo_rough2_vrc_01.open_command.put(1)
+        tmo_rough.tmo_rough2_vrc_01.override_force_open.put(1)
+        
+        #open rough1_vrc_01
+        tmo_rough.tmo_rough1_vrc_01.error_reset.put(1)
+        tmo_rough.tmo_rough1_vrc_01.open_command.put(1)
+        tmo_rough.tmo_rough1_vrc_01.override_force_open.put(1)
+      
+        #remove resets and overrides
+        self._ip_vrc_02.error_reset.put(0)
+        tmo_rough.tmo_rough1_vrc_01.error_reset.put(0)
+        tmo_rough.tmo_rough2_vrc_01.error_reset.put(0)
+        tmo_rough.tmo_rough1_vrc_01.override_force_open.put(0)
+        tmo_rough.tmo_rough2_vrc_01.override_force_open.put(0)
+        
+        #change the setpoints for rough2_vrc_01
+        self._change_valve_setpoint(tmo_rough.tmo_rough2_vrc_01, 800)
+    
+    def reset_at_vac_setpoints(self):
+        """ 
+        Reset all 'at_vac' setpoints for gauges and backing pressure_sp for pumps. 
+        This is a convience function in case the pump down script did not exit gracefully.
+        """
+        self._change_valve_setpoint(tmo_rough.tmo_rough1_vrc_01, self._lv_gauge_setpoint)
+        self._change_valve_setpoint(tmo_rough.tmo_rough2_vrc_01, self._lv_gauge_setpoint)
+        self._change_pump_backing_setpoint(key='g1', setpoint=self._pump_backing_setpoint)
+        self._change_pump_backing_setpoint(key='inst', setpoint=self._pump_backing_setpoint)
+        self._change_valve_setpoint(tmo_rough.tmo_rough1_vrc_02, self._lv_gauge_setpoint)
+        self._change_pump_backing_setpoint(key='g2', setpoint=self._pump_backing_setpoint)
 
 tmo_pumpdown_mbes=TmoPumpDown(instrument='MBES')
 tmo_pumpdown_mrco=TmoPumpDown(instrument='MRCO')

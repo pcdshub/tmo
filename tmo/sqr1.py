@@ -21,7 +21,7 @@ from ophyd.pv_positioner import PVPositionerIsClose
 from ophyd.signal import EpicsSignal
 from ophyd.status import MoveStatus as StatusBase
 from ophyd.status import wait as status_wait
-
+from pcdsdevices.interface import FltMvInterface
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class Axis(str, enum.Enum):
     rZ = 'rZ'
 
 
-class SQR1Axis(PVPositionerIsClose):
+class SQR1Axis(FltMvInterface, PVPositionerIsClose):
     """
     Single axis of the square-one tri-sphere motion system.
 
@@ -146,7 +146,7 @@ class SQR1Axis(PVPositionerIsClose):
             moved_cb: typing.Callable = None,
             wait: bool = False,) -> StatusBase:
         return self.move(new_position, wait=False, moved_cb=moved_cb,
-                         timeout=timeout, sync_enable=False)
+                         timeout=60.0, sync_enable=False)
 
 
 class SQR1(Device):
@@ -237,6 +237,16 @@ class SQR1(Device):
         self.rx._sync_setpoints = self.sync_setpoints
         self.ry._sync_setpoints = self.sync_setpoints
         self.rz._sync_setpoints = self.sync_setpoints
+        
+        def stage():
+            self.sync_setpoints()
+        
+        self.x.stage=stage
+        self.y.stage=stage
+        self.z.stage=stage
+        self.rx.stage=stage
+        self.ry.stage=stage
+        self.rz.stage=stage        
 
     def sync_setpoints(self):
         """
@@ -253,8 +263,10 @@ class SQR1(Device):
         self.ry.setpoint.put(self.ry.readback.get())
         self.rz.setpoint.put(self.rz.readback.get())
 
+    
     def multi_axis_move(
         self,
+        preset_pos: str | None = None,
         x_sp: float | None = None,
         y_sp: float | None = None,
         z_sp: float | None = None,
@@ -269,6 +281,8 @@ class SQR1(Device):
 
         Parameters
         ----------
+        preset_pos: str or None, optional
+            Move to a preset position labeled by the preset_pos string.
         x_sp : float or None, optional
             The desired position for the X-axis.If None (default), the current
             position is used.
@@ -308,6 +322,20 @@ class SQR1(Device):
         >>> tri_sphere = SQR1(prefix="SQR1:", name="tri_sphere")
         >>> status = tri_sphere.multi_axis_move(x_sp=1.0, y_sp=2.0, z_sp=3.0)
         """
+
+        if preset_pos is not None:
+            axis_list = [self.x, self.y, self.z, self.rz, self.ry, self.rz]
+            if all(hasattr(a.presets.positions, preset_pos) for a in axis_list):
+                x_sp = (getattr(self.x.presets.positions, preset_pos)).pos
+                y_sp = (getattr(self.y.presets.positions, preset_pos)).pos
+                z_sp = (getattr(self.z.presets.positions, preset_pos)).pos
+                rx_sp = (getattr(self.rx.presets.positions, preset_pos)).pos
+                ry_sp = (getattr(self.ry.presets.positions, preset_pos)).pos
+                rz_sp = (getattr(self.rz.presets.positions, preset_pos)).pos
+            else:
+                logger.error('One of the axes is missing the desired state.')
+                return
+
         x_sp = self.x.readback.get() if x_sp is None else x_sp
         y_sp = self.y.readback.get() if y_sp is None else y_sp
         z_sp = self.z.readback.get() if z_sp is None else z_sp
@@ -339,3 +367,12 @@ class SQR1(Device):
         """stop command for all axes."""
         self.stop_signal.put(self.stop_value)
 
+    def preset_list(self):
+        """return a list of preset positions."""
+        preset_list = []
+        axis_list = [self.x, self.y, self.z, self.rz, self.ry, self.rz]
+        for axis in axis_list:
+            for preset in list(vars(axis.presets.positions).keys()):
+                if preset not in preset_list:
+                    preset_list.append(preset)
+        return preset_list

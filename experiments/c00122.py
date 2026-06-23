@@ -5,7 +5,6 @@
 """
 
 from tmo.tmo_mpods import get_mpod
-from tmo.tmo_beamline_control import get_lamp_sq1, get_lamp_motion
 from tmo.tmo_optics import get_fzp
 from tmo.db import sp1k4
 from tmo.tmo_beamline_control import _log_positions
@@ -14,30 +13,7 @@ import sys
 sys.path.append('/cds/home/opr/tmoopr')
 
 class User():
-    def log_run_parameters(self,run, msg=None):
-        """
-        Log the setting of various devices: MPOD, LAMP motion, FZP
     
-        Parameters
-        ----------
-        run_num : int or daq
-            Run number to tag.
-        msg : str, optional
-            Message to add to the elog post. The default is None.
-    
-        Returns
-        -------
-        None.
-    
-        """
-        if (type(run) != int):
-            run_num = np.max( run.control.getStatus()[-2:] )
-        else:
-            run_num = run
-        get_lamp_sq1(log=True, msg=msg, run=run_num)
-        get_mpod(log=True, msg=msg, run=run_num)
-        get_lamp_motion(log=True, msg=msg, run=run_num)
-        get_fzp(log=True, msg=msg, run=run_num)
         
     def get_fzp_states(self, state_num):
         state_str = ('_state%02d' % state_num)

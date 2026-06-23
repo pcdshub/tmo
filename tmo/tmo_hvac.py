@@ -4,13 +4,17 @@
 ########
 from pcdsdevices.device import Device
 from pcdsdevices.interface import BaseInterface
+from ophyd.signal import EpicsSignal
 from pcdsdevices.gauge import GCCPLC, GaugePLC
 from pcdsdevices.pump import PTMPLC, PIPPLC
-from pcdsdevices.valve import VGC_2S, VCN
+from pcdsdevices.valve import VGC_2S, VCN, VRCNO, VRC
 from ophyd.device import Component as Cpt
+from pcdsdevices.device import ObjectComponent as OCpt
 from tmo.db import tv1k4_vgc_01, tv1k4_vfs_01, tv1k4_vgc_02, st3k4_pps_vgc_01, mr2k4_kbo_vwc_01, mr3k4_kbo_vwc_01, mr3k4_kbo_vfs_01, li3k4_ip1_vwc_01, pc5k4_vwc_01, mr4k4_kbo_vwc_01, mr5k4_kbo_vwc_01, tm2k4_kbo_vwc_01
 import pandas as pd
 from collections import OrderedDict
+from tmo.tmo_utils import log_positions as _log_positions
+from tmo.tmo_utils import EpicsSignalAlarm
 import logging
 import json
 import re
@@ -76,7 +80,13 @@ Gauge_States = ['Off','Disconnected','OoR','PressInvalid','Starting','On','Valid
 Pump_States = ['STOPPED','STARTING', 'RUNNING', 'FAULT', 'STOPPING']
 Valve_States=['OPEN','CLOSED','MOVING','INVALID','OPEN_F']
 
-    
+class GCCPLC(GCCPLC):
+    tab_component_names = True
+    alarm = Cpt(EpicsSignalAlarm, ':PRESS_RBV', kind='normal')
+
+class PIPPLC(PIPPLC):
+    tab_component_names = True
+    alarm = Cpt(EpicsSignalAlarm, ':PRESS_RBV', kind='normal')            
 
 def _build_dict(PUMP_LIST, GAUGE_LIST):
     defn = OrderedDict()
@@ -91,10 +101,13 @@ def _build_dict(PUMP_LIST, GAUGE_LIST):
 class TmoHvacBase(BaseInterface, Device):
     """
     This is a class for all of the high vacuum devices (gauges and pumps) associated with the IP.
+    
     Methods:
-    --------------------
+    ---------
     vac_status: displays a dataframe of all the HV gauge pressures.
+    
     pump_status: displays a dataframe of all the pump currents and speeds. 
+    
     """
     tab_component_names= True
     tab_whitelist = ['vac_status', 'pump_status']
@@ -139,23 +152,48 @@ class TmoHvacBase(BaseInterface, Device):
         pumpDF = pd.DataFrame({"Pump:": current_dict.keys(), "Pump Current:": current_dict.values(), "at_Speed:": speed_dict.values(), "Pump_State:": status_dict.values()})
         print (pumpDF)
 
+class TmoBlValves(BaseInterface, Device):
+    tab_component_names=True
+    
+    st3k4_pps_vgc_01 = OCpt(st3k4_pps_vgc_01)
+    mr2k4_kbo_vwc_01 = OCpt(mr2k4_kbo_vwc_01)
+    mr3k4_kbo_vwc_01 = OCpt(mr3k4_kbo_vwc_01)
+    mr3k4_kbo_vfs_01 = OCpt(mr3k4_kbo_vfs_01)
+    li3k4_ip1_vwc_01 = OCpt(li3k4_ip1_vwc_01)
+    pc5k4_vwc_01 = OCpt(pc5k4_vwc_01)
+    mr4k4_kbo_vwc_01 = OCpt(mr4k4_kbo_vwc_01)
+    mr5k4_kbo_vwc_01 = OCpt(mr5k4_kbo_vwc_01)
+    tm2k4_kbo_vwc_01 = OCpt(tm2k4_kbo_vwc_01)
+    
+class FeeBlValves(BaseInterface, Device):
+    tab_component_names=True
+    tv1k4_vgc_01 = OCpt(tv1k4_vgc_01)
+    tv1k4_vfs_01 = OCpt(tv1k4_vfs_01)
+    tv1k4_vgc_02 = OCpt(tv1k4_vgc_02)
+    
+    
 class TmoHVacBl(TmoHvacBase):
     """
     This is a class for all of the high vacuum devices (gauges, pumps, gate valves) along the TMO beamline, exclusive of the IP.
     Methods:
-    --------------------
+    --------
     vac_status  - retruns a dataframe of all the HV gauge pressures.
+    
     pump_status - returns a dataframe of all the pump currents and speeds. 
+    
     valve_status- get status of TMO vacuum gate valves
+    
     open_valves - open all TMO valves
+    
     close_valves- close all TMO valves
+    
     """    
     
     tab_component_names= True
     tab_whitelist = ['valve_status','open_valves', 'close_valves']
     
     _fee_vac_valves=[tv1k4_vgc_01,tv1k4_vfs_01,tv1k4_vgc_02]
-    _tmo_vac_valves=[st3k4_pps_vgc_01,mr2k4_kbo_vwc_01,mr3k4_kbo_vwc_01,mr3k4_kbo_vfs_01,li3k4_ip1_vwc_01,pc5k4_vwc_01]#,mr4k4_kbo_vwc_01,mr5k4_kbo_vwc_01,tm2k4_kbo_vwc_01]  
+    _tmo_vac_valves=[st3k4_pps_vgc_01,mr2k4_kbo_vwc_01,mr3k4_kbo_vwc_01,mr3k4_kbo_vfs_01,li3k4_ip1_vwc_01,pc5k4_vwc_01,mr4k4_kbo_vwc_01,mr5k4_kbo_vwc_01,tm2k4_kbo_vwc_01]  
     
     def valve_status(self):
         """Get the status of the vacuum valves along the TMO beamline."""
@@ -186,7 +224,7 @@ class TmoHVacBl(TmoHvacBase):
         """Close all vacuum gate valves on TMO beamline from ST3K4 thru TM2K4"""
         for ind, valve in enumerate(self._tmo_vac_valves):
             if hasattr(valve, 'open_command'):
-                valve.open_command.put(0)
+                valve.open_command.put(0, wait=True)
 
         self.valve_status()
 
@@ -197,12 +235,20 @@ def _build_rough_dict(GAUGE_LIST,VALVE_LIST):
         defn[name.lower()] = Cpt(GaugePLC, gauge, kind='hinted')
     for valve in VALVE_LIST:
         name = valve.replace(':','_')
-        valve_type = re.search(':V..:', valve)
-        if (valve_type.group()[1:-1] == 'VRC'):
-            defn[name.lower()] = Cpt(VGC_2S, valve, kind='hinted')
-        elif (valve_type.group()[1:-1] == 'VFV'):
-            defn[name.lower()] = Cpt(VCN, valve, kind='hinted')
-                
+        valve_split = valve.split(':')
+        valve_loc = valve_split[0]
+        valve_type = valve_split[2]
+        valve_num = valve_split[3]
+        if 'TMO' in valve_loc:
+            if (valve_type == 'VRC'):
+                defn[name.lower()] = Cpt(VGC_2S, valve, kind='hinted')
+            elif (valve_type == 'VFV'):
+                defn[name.lower()] = Cpt(VCN, valve, kind='hinted')    
+        else:
+            if (valve_num == '02'):
+                defn[name.lower()] = Cpt(VRCNO, valve, kind='hinted')
+            else:
+                defn[name.lower()] = Cpt(VRC, valve, kind='hinted')
     return defn
 
 class TmoRoughBase(BaseInterface, Device):

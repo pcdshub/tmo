@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import argparse
+import json
 import os
 import logging
 
@@ -54,7 +55,7 @@ class PvlistParser:
 if __name__ == '__main__':
     # basepath = os.path.dirname(__file__)
     parser = argparse.ArgumentParser(prog='Elog PVlist parser')
-    parser.add_argument('-f', help="main file path", type=str, dest="filepath")
+    parser.add_argument('-f', help="main file path", type=str, dest="filepath", required=True)
 
     args = parser.parse_args()
     main_file = args.filepath
@@ -62,4 +63,4 @@ if __name__ == '__main__':
     assert (os.path.isfile(main_file)), "file not found"
     pvlist_parser = PvlistParser()
     pvlist_parser.read_file(main_file)
-    print(pvlist_parser.pvlists)
+    print(json.dumps(pvlist_parser.pvlists, indent=2))
