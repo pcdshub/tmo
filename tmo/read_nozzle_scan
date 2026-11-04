@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Jul  3 17:45:30 2025
+
+@author: tmoopr
+"""
+
+f = open('nozzle_scan_03072025_1741_100um.txt',"r")
+lines = f.readlines()
+result = []
+for x in lines:
+    result.append(x.split(' ')[1])
+f.close()

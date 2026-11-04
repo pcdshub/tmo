@@ -10,7 +10,7 @@ from pcdsdevices.pv_positioner import PVPositioner, PVPositionerIsClose
 from ophyd.status import DeviceStatus
 from pcdsdevices.valve import VVC, VCN
 from tmo.db import tmo_cvmi, tmo_lamp, tmo_mrco, tv1k4_vgc_01, tv1k4_vfs_01, tv1k4_vgc_02, st3k4_pps_vgc_01, mr2k4_kbo_vwc_01, mr3k4_kbo_vwc_01, mr3k4_kbo_vfs_01, li3k4_ip1_vwc_01, pc5k4_vwc_01, rtdsk0
-from tmo.db import im2k0, st1k4, st3k4_pps, st4k4, elog
+from tmo.db import im2k0, st1k0, st3k4_pps, st4k4, elog
 from tmo.tmo_hvac import tmo_hvac
 import matplotlib.pyplot as plt
 import pyfiglet
@@ -39,7 +39,12 @@ class TmoBeamLinePositioner(PVPositionerIsClose):
 
 class PmpsOverride(BaseInterface, GroupDevice):
     """
-    This class controls the PMPS override for the TMO beamline.   
+    This class controls the PMPS override for the TMO beamline.
+    Methods:
+    ----------
+        apply(max_eng, duration): apply the pmps override with max energy for the duration
+        cancel() : Cancel the pmps override
+        status(): Give the status of the PMPS override.
     """
     tab_component_names = True
     tab_whitelist = ['apply','cancel','status']
@@ -329,6 +334,9 @@ def set_transmission(transmission):
         Transmission to be applied.
 
     """
+    if transmission>1:
+        logger.error('Transmission should be between 0 and 1, not setting transmission.')
+        return
     tmo_beamline_cntl.set_transmission(transmission)
     
 def set_beam_class(beam_class):
@@ -506,6 +514,7 @@ class UndSeg(GroupDevice):
     
     """
     k_act = UCpt(EpicsSignalRO)
+    k_des = UCpt(EpicsSignalRO)
     x_bpm = UCpt(EpicsSignalRO)
     y_bpm = UCpt(EpicsSignalRO)
     x_off = UCpt(EpicsSignalRO)
@@ -521,12 +530,13 @@ def _build_und_list(segs):
     fac_mode = fac_mode if fac_mode=='SC' else 'CU'
     for und_ind in segs:
         k_act_pv = 'USEG:UNDS:%d50:KAct' % (und_ind)
+        k_des_pv = 'USEG:UNDS:%d50:KDes' % (und_ind)
         x_bpm_pv = 'BPMS:UNDS:%d90:X%sS1H' % (und_ind,fac_mode)
         y_bpm_pv = 'BPMS:UNDS:%d90:Y%sS1H' % (und_ind,fac_mode)
         x_off_d = 'BPMS:UNDS:%d90:XOFF.D' % (und_ind)
         y_off_d = 'BPMS:UNDS:%d90:YOFF.D' % (und_ind)
         name = 'u' + str(und_ind)
-        defn[name.lower()] = Cpt(UndSeg, "", k_act_prefix=k_act_pv, 
+        defn[name.lower()] = Cpt(UndSeg, "", k_act_prefix=k_act_pv, k_des_prefix=k_des_pv,
                                  x_bpm_prefix=x_bpm_pv, y_bpm_prefix=y_bpm_pv,
                                  x_off_prefix=x_off_d, y_off_prefix=y_off_d,
                                  kind='hinted')
@@ -553,12 +563,14 @@ class UndulatorParameter(BaseInterface, GroupDevice):
         msg - optional argument to append a message to the elog with the KB positions 
         plot - display a plot of the positions
         """
-        curr_positions = {}
+        curr_positions = OrderedDict()
+        targ_positions = OrderedDict()
         segs = []
         for keys in dir(self):
             und = getattr(self, keys)
             if hasattr(und, 'k_act'):
                 curr_positions[keys] = und.k_act.get()
+                targ_positions[keys] = und.k_des.get()
                 segs.append(int(keys[1:]))
         kwargs['tags'] = kwargs.get('tags', ' ') + ' undulator_k'                  
         
@@ -573,7 +585,7 @@ class UndulatorParameter(BaseInterface, GroupDevice):
             fig.savefig('/cds/home/opr/tmoopr/tmoopr_elog_plots/unds.png')
             kwargs['attachments'] = ['/cds/home/opr/tmoopr/tmoopr_elog_plots/unds.png']
         
-        _log_positions(curr_positions, log, msg, **kwargs) 
+        _log_positions(curr_positions, log, msg, set_points=targ_positions, **kwargs) 
 
     def get_bpm(self, save_ref=False):
         """
@@ -679,15 +691,25 @@ class UndulatorParameter(BaseInterface, GroupDevice):
             
         
 
-u_segs = list(range(21,35)) + list(range(36,48))
+u_segs = list(range(20,35)) + list(range(36,48))
 Unds = type('Unds',(UndulatorParameter, BaseInterface, Device), _build_und_list(u_segs))
 unds = Unds(name='undulators')
 #unds = UndulatorParameter()
 
+def st1k0_follow_st3k4():
+    def transition_check(*, old_value, value, **kwargs):
+        logger.debug('old_value: %s, value: %s' % (old_value, value))
+        if ((value != old_value) and (value>0) ): #value changed and stopper is closing
+           # st1k0.state('In')
+           logger.debug('insert st1k0')
+    st3k4_pps.in_signal.subscribe(transition_check)
+    sys.stdout.write("\x1b]2;ST3K4 Follow\x07")
+        
+
 def get_stprs():
     state=['OUT','IN', 'Moving', 'Invalid']
     curr_positions = {
-        st1k4.name: st1k4.state.position,
+        st1k0.name: st1k0.state.position,
         st3k4_pps.name: state[(1-st3k4_pps.out_signal.get())],
         st4k4.name:state[st4k4.position_state.get()]
         }
@@ -695,11 +717,11 @@ def get_stprs():
     
 def stop_xray():
     """
-    This function puts st1k4 in to block the beam. 
+    This function puts st1k0 in to block the beam. 
     """
     beam_class = tmo_beamline_cntl.beamclass_current.get()
     tmo_beamline_cntl.apply_beam_parameter(beam_class=1)
-    st1k4.state.mv('IN', wait=True)
+    st1k0.state.mv('IN', wait=True)
     tmo_beamline_cntl.apply_beam_parameter(beam_class=beam_class)
     
 def get_rtds():
@@ -851,16 +873,16 @@ class GMD(BaseInterface, Device):
     pulse_int = Cpt(GMDPulseIntegration, ':HPS', kind='omitted', doc='')
     
     def __init__(self, *args, **kwargs):
-        self._completion_status = None #For fly scans
+        self.flyer_attr=['mj','avg_int'] #attributes for flying
+        self._start_time=None #indicator for start of flying
+        self._acquiring = False #indicator for flyer acquiring
+        self._paused = False #indicator for pausing flyer
         return super().__init__(*args, **kwargs)
            
     def _data_cb(self, value, timestamp, **kwargs):
-        obj = kwargs["obj"]
+        obj = kwargs['obj']
         self.data[obj.name]['value'].append(value)
-        if 'timestamp' in self.data[obj.name]:
-            self.data[obj.name]['timestamp'].append(timestamp)
-        elif 'timestamps' in self.data[obj.name]:
-            self.data[obj.name]['timestamps'].append(timestamp)
+        self.data[obj.name]['timestamp'].append(timestamp)
     
     def stage(self):
         self.data=OrderedDict()
@@ -869,6 +891,15 @@ class GMD(BaseInterface, Device):
         self.uid1=self.avg_int.subscribe(self._data_cb)
         self.uid2=self.mj.subscribe(self._data_cb)        
         return[self]
+    
+    def describe(self):
+        data = {
+            self.avg_int.name: {'source':self.avg_int.pvname, 'dtype':'array','shape':[], 'units':'mj'},
+            self.mj.name: {'source':self.mj.pvname, 'dtype':'array','shape':[], 'units':'mj'},
+#            self.avg_int.name: {'source':self.avg_int.pvname, 'dtype':'string','shape':[1,10], 'units':'mj'},
+#            self.mj.name: {'source':self.mj.pvname, 'dtype':'string','shape':[1,10], 'units':'mj'},
+            }
+        return data
     
     def trigger(self):
         self.data[self.avg_int.name]={'value':[], 'timestamp':[]}
@@ -883,49 +914,106 @@ class GMD(BaseInterface, Device):
         self.mj.unsubscribe(self.uid2)
         return [self]
     
-    def complete(self):
-        if self._completion_status is None:
-            raise RuntimeError("No collection in progress")
-        return self._completion_status
-
     def kickoff(self):
-        if self._completion_status is not None and not self._completion_status.done:
+        logger.debug('called .kickoff')
+        #if self._completion_status is not None and not self._completion_status.done:
+        if self._acquiring:
             raise RuntimeError("Kicking off a second time?!")      
-        self.data=OrderedDict()
-        self.data[self.avg_int.name]={'value':[], 'timestamps':[]}
-        self.data[self.mj.name]={'value':[], 'timestamps':[]}
-        st = DeviceStatus(device=self)
-        self._completion_status = st
         
-        self.uid1=self.avg_int.subscribe(self._data_cb)
-        self.uid2=self.mj.subscribe(self._data_cb)
+        self.data={}
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            self.data[obj.name]={'value':[], 'timestamp':[]}
         
-        st.set_finished()
+#        st = DeviceStatus(device=self)
+#        self._completion_status = st
+#        st.set_finished()
+        
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.subscribe(self._data_cb)
+            logger.debug('subscribe %s' % obj.name)
+        
+        self._start_time = time.time()
+        self._acquiring = True
+        self._paused = False
         
         kickoff_st = DeviceStatus(device=self)
         kickoff_st.set_finished()
         return kickoff_st
-            
-    def collect(self):
-        self.avg_int.unsubscribe(self.uid1)
-        self.mj.unsubscribe(self.uid2)
-        return self.data
+    
+    def pause(self):
+        '''Pause acquisition'''
+        logger.debug('called .pause')
+        if not self._acquiring:
+            # nothing to do
+            return
         
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.unsubscribe_all()
+            logger.debug('unsubscribe %s' % obj.name)
+        self._paused = True
+    
+    def resume(self):
+        '''Resume acquisition'''
+        logger.debug('called .resume')
+        if not self._acquiring:
+            # nothing to do
+            return
+        if not self._paused:
+            #do nothings
+            return
+        #restart subscription
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.subscribe(self._data_cb)
+            logger.debug('subscribe %s' % obj.name)
+        self._paused = False
+        
+    def complete(self):
+        logger.debug('called .complete')
+        #if self._completion_status is None:
+        if not self._acquiring:
+            raise RuntimeError("No collection in progress")
+        
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.unsubscribe_all()
+            logger.debug('unsubscribe %s' % obj.name)
+        
+        self._acquiring = False #not acquiring
+        self._paused = False #not paused
+        
+        completion_status = DeviceStatus(self)
+        completion_status.set_finished()
+        return completion_status
+
+#        if not self._completion_status.done:
+#            logger.debug('set completion to done.')
+#            self._completion_status.set_finished()
+#        return self._completion_status
+            
     def describe_collect(self):
-        data = {self.name:{
-            self.avg_int.name: {'source':self.avg_int.pvname, 'dtype':'array','shape':[1,10], 'units':'mj'},
-            self.mj.name: {'source':self.mj.pvname, 'dtype':'array','shape':[1,10], 'units':'mj'},
-            }}
-        return data
-                
-    def describe(self):
-        data = {
-            self.avg_int.name: {'source':self.avg_int.pvname, 'dtype':'array','shape':[1,10], 'units':'mj'},
-            self.mj.name: {'source':self.mj.pvname, 'dtype':'array','shape':[1,10], 'units':'mj'},
-#            self.avg_int.name: {'source':self.avg_int.pvname, 'dtype':'string','shape':[1,10], 'units':'mj'},
-#            self.mj.name: {'source':self.mj.pvname, 'dtype':'string','shape':[1,10], 'units':'mj'},
-            }
-        return data
+        logger.debug('called .describe_collect')
+        data={}
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            data[obj.name]={'source':obj.pvname, 'dtype':'number','shape':[], 'units':'mj'}
+        return {self.name: data}
+    
+    def collect(self):
+        logger.debug('called .collect')
+        if self._acquiring:
+            raise RuntimeError('Acquisition still in progress. Call complete() first.')
+        timestamps={}
+        value={}
+        for attr, data in self.data.items():
+            timestamps[attr]=data['timestamp']
+            value[attr]=data['value']
+        yield dict(time=self._start_time,
+            timestamps=timestamps,
+            data=value)
         
 gmd = GMD('EM1K0:GMD', name='gmd')
 xgmd = GMD('EM2K0:XGMD', name='xgmd')
@@ -945,6 +1033,13 @@ class TwoPulseTwoColor(BaseInterface, Device):
              doc='ask stefan')
     ratio = Cpt(EpicsSignal,':RATIO', kind='normal',
                 doc='ratio betwee pulse 1 and pulse 2 photon energies.')
+    
+    def __init__(self, *args, **kwargs):
+        self.flyer_attr=['p1','p2']
+        self._start_time=None #indicator for start of flying
+        self._acquiring = False #indicator for flyer acquiring
+        self._paused = False #indicator for pausing flyer
+        return super().__init__(*args, **kwargs)
     
     def _data_cb(self, value, timestamp, **kwargs):
         obj = kwargs["obj"]
@@ -978,5 +1073,97 @@ class TwoPulseTwoColor(BaseInterface, Device):
             self.p2.name: {'source':self.p2.pvname, 'dtype':'array','shape':[1,10], 'units':'mj'},
             }
         return data
+    
+    def kickoff(self):
+        logger.debug('called %s.kickoff' % self.name)
+        #if self._completion_status is not None and not self._completion_status.done:
+        if self._acquiring:
+            raise RuntimeError("Kicking off a second time?!")      
+        
+        self.data={}
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            self.data[obj.name]={'value':[], 'timestamp':[]}
+        
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.subscribe(self._data_cb)
+            logger.debug('subscribe %s' % obj.name)
+        
+        self._start_time = time.time()
+        self._acquiring = True
+        self._paused = False
+        
+        kickoff_st = DeviceStatus(device=self)
+        kickoff_st.set_finished()
+        return kickoff_st
+    
+    def pause(self):
+        '''Pause acquisition'''
+        logger.debug('called .pause')
+        if not self._acquiring:
+            # nothing to do
+            return
+        
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.unsubscribe_all()
+            logger.debug('unsubscribe %s' % obj.name)
+        self._paused = True
+    
+    def resume(self):
+        '''Resume acquisition'''
+        logger.debug('called .resume')
+        if not self._acquiring:
+            # nothing to do
+            return
+        if not self._paused:
+            #do nothings
+            return
+        #restart subscription
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.subscribe(self._data_cb)
+            logger.debug('subscribe %s' % obj.name)
+        self._paused = False
+    
+    def complete(self):
+        logger.debug('called .complete')
+        #if self._completion_status is None:
+        if not self._acquiring:
+            raise RuntimeError("No collection in progress")
+        
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            obj.unsubscribe_all()
+            logger.debug('unsubscribe %s' % obj.name)
+        
+        self._acquiring = False #not acquiring
+        self._paused = False #not paused
+        
+        completion_status = DeviceStatus(self)
+        completion_status.set_finished()
+        return completion_status
+            
+    def describe_collect(self):
+        logger.debug('called .describe_collect')
+        data={}
+        for attr in self.flyer_attr:
+            obj = getattr(self, attr)
+            data[obj.name]={'source':obj.pvname, 'dtype':'number','shape':[], 'units':'mj'}
+        return {self.name: data}
+    
+    def collect(self):
+        logger.debug('called .collect')
+        if self._acquiring:
+            raise RuntimeError('Acquisition still in progress. Call complete() first.')
+        timestamps={}
+        value={}
+        for attr, data in self.data.items():
+            timestamps[attr]=data['timestamp']
+            value[attr]=data['value']
+        yield dict(time=self._start_time,
+            timestamps=timestamps,
+            data=value)
     
 two_pulse_two_color = TwoPulseTwoColor('TPC:KFE', name='two_pulse_two_color')

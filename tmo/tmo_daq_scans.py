@@ -1,7 +1,7 @@
 import numpy as np
 import h5py
 import time as time
-from tmo.db import RE, bp, bps, bpp
+from tmo.db import bp, bps, bpp #, RE
 from ophyd.device import Component as Cpt
 from ophyd import EpicsSignalRO
 from pcdsdevices.device import Device
@@ -13,6 +13,7 @@ from collections import defaultdict
 from cytoolz import partition
 import pandas as pd
 from collections import OrderedDict
+from datetime import datetime
 from tabulate import tabulate
 import threading 
 import os
@@ -20,12 +21,16 @@ import logging
 from bluesky.callbacks import LiveTable, LivePlot, CallbackBase
 from bluesky.utils import short_uid
 from bluesky.plan_stubs import checkpoint, abs_set, trigger_and_read #, wait
+from bluesky.protocols import Stageable, Triggerable, Readable, Locatable, Movable, Flyable, Subscribable  
 import matplotlib.pyplot as plt
 logger = logging.getLogger(__name__)
 from tmo.db import daq, elog
 from tmo.tmo_beamline_control import gmd,xgmd,two_pulse_two_color
-from tmo.tmo_optics import fzp_det
-from daq.tmo_sc import procmgr_hsd
+#from tmo.tmo_optics import fzp_det
+from daq.scripts.tmo_sc import procmgr_hsd
+from bluesky import RunEngine
+RE=RunEngine({}) #use my own RunEngine with no callbacks. 
+RE.pause_msg = "\nYour RunEngine is entering a paused state. These are your options for changing\nthe state of the RunEngine:\n\nscan.resume()    Resume the scan.\nscan.abort()     Perform cleanup, then kill the scan. Mark exit_stats='aborted'.\nscan.stop()      Perform cleanup, then kill the scan. Mark exit_status='success'.\nscan.halt()      Emergency Stop: Do not perform cleanup --- just stop.\n"
 
 sim_motor = FastMotor(name='DAQ Motor')
 
@@ -166,7 +171,8 @@ def one_nd_step_no_wait(detectors, step, pos_cache):
     yield from trigger_and_read(list(detectors) + list(motors))
 
 class ScanCallback(CallbackBase):
-    
+    """Future function to take place of the exisiting scan callback which is clunky.
+    """
     def _createScanTab(self):
         return
     
@@ -249,13 +255,15 @@ class DaqScan():
             return {'events':{'value':self.daq.events, 'timestamp':time.time()}}
         def hack_describe():
             """ This is a temporary hack for bluesky tables."""
-            if self.profile:
-                return {'events': {'source':'', 'dtype':'number','shape':[]}}
-            else:
-                return {}
+ #           if self.profile:
+ #               return {'events': {'source':'', 'dtype':'number','shape':[]}}
+ #           else:
+ #               return {}
+            return {'events': {'source':'', 'dtype':'number','shape':[]}}
         self.daq = daq
         self.daq.read = hack_read
-#        self.daq.describe = hack_describe
+        self.daq.describe = hack_describe
+        self.RE = RE
         
         #### Attributes For scans
         self.nevents_step=8200*10 
@@ -285,11 +293,12 @@ class DaqScan():
         self._gmd_data=OrderedDict() #dictionary for saving data from the GMD/xGMD
         self._tptc_data=OrderedDict()
         self._dets = [self.daq]
+        self._flyers = [] #list of devices to use as flyers
         self._per_step=None #callback function for each step of the scan.
         self._cb=None #callback for bluesky
         self._md=None #metadata for scans. 
         self._fly=None #flag to indicate fly scans.
-        self._elog_gmd=False #flag to indicate posting gmd to the elog. 
+        self._elog_gmd=True #flag to indicate posting gmd to the elog. 
         self._elog_gmd_scale=[0,0.5]
         self._elog_xgmd_scale=[0,0.5]
         
@@ -299,7 +308,7 @@ class DaqScan():
         self._no_motor = FastMotor(name='No Motor')
         
         #stop the default table setting. 
-        for i in range(0,2):
+        for i in range(0,10):
             RE.unsubscribe(i)
     
     @property
@@ -308,10 +317,30 @@ class DaqScan():
            'Values': []}
         for att in d['Attribute']:
             d['Values'].append(getattr(self, att))
-        d['Attribute'].extend(['daqState','last run'])
-        d['Values'].extend([self.daq.daqState, self.run_num])
+        d['Attribute'].extend(['daqState','last run','RunEngine state'])
+        d['Values'].extend([self.daq.daqState, self.run_num, RE.state])
         infoDF = pd.DataFrame(data=d)
-        print(infoDF)
+        infoDF_str = tabulate(infoDF, headers="keys", tablefmt="pretty")
+        print(infoDF_str)
+    
+    #The following are for interacting with the run engine
+    #This wrapper seems less than idea.
+    def resume(self):
+        """Resume scan when paused."""
+        if self.record: self.log_scan('Scan paused and resumed.')
+        return RE.resume()    
+    def abort(self):
+        """Perform cleanup, then kill scan. Mark exit_stats='aborted'."""
+        if self.record: self.log_scan('Scan aborted')
+        return RE.abort()    
+    def stop(self):
+        """Perform cleanup, then kill scan. Mark exit_status='success'."""
+        if self.record: self.log_scan('Scan stopped')
+        return RE.stop()
+    def halt(self):
+        """Emergency Stop: Do not perform cleanup --- just stop."""
+        if self.record: self.log_scan('Scan halted')
+        return RE.halt()
     
     def _check_elog(self):
         ''' Check that the experiment number from the DAQ and the Elog match.'''
@@ -326,7 +355,8 @@ class DaqScan():
         
         
     def _update_scan_param(self, nevents_step=None, tot_events=None, max_events_run=None, record=None, restore=None, motor=None, freeRun=None, msg=None):
-        """ Update the attributes of scan with the current parameters. """
+        """ Update the attributes of scan with the current parameters. """        
+        logger.debug('nevents_step=%s, tot_events=%s, max_events_run=%s, record=%s' % (nevents_step, tot_events, max_events_run, record))
         
         #update parameters with new values
         self.nevents_step = nevents_step if nevents_step is not None else self.nevents_step
@@ -336,8 +366,11 @@ class DaqScan():
         self.restore = restore if restore is not None else self.restore
         self.freeRun = freeRun if freeRun is not None else self.freeRun
         self.scan_docstring = msg if msg is not None else self.scan_docstring
+        #09/19/26: JPC removes option for fzp
+        self.include_fzp = False #never use the fzp. 
         
         self._dets = [self.daq] #list of detectors for bluesky. The minimum needed to scan the DAQ is self.daq. 
+        self._flyers = [] #list of flyers for bluesky.
         self._cb = {"start":self._startRun, "event":self._event, "stop": self._endRun} #callback functions for bluesky
 
         #setup bluesky metadata to use as a scan descritpion. 
@@ -352,14 +385,21 @@ class DaqScan():
         
         #Set daq to connected state and wait for it to get there
         self.daq._set_connected()
-        while self.daq.daqState != 'connected':
-            continue
+        logger.debug('daqState: \'%s\'' % self.daq.daqState)
+        with self.daq.daqState_cv:
+            while self.daq.daqState != 'connected':
+                logging.debug('daqState \'%s\', waiting for \'%s\'...' % (self.daq.daqState, 'connected'))
+                self.daq.daqState_cv.wait(0.5)
+            logging.debug('daqState: \'%s\'' % self.daq.daqState)
+#        while self.daq.daqState != 'connected':
+#            continue
+#        logger.debug('daqState: \'%s\'' % self.daq.daqState)
         
         #Build motor list, initial position list, and condifure DAQ. 
         if motor is None: #No motor is provided. This means the scan will be a timedRun or there was a mistake. 
             self._motors=[]
             self.daq.configure(record=self.record, events=self.nevents_step)#, motors=[self._no_motor]) #try adding later
-            self._cb['all'] = [LiveTable(self._dets)]
+            self._cb['all'] = [LiveTable(self._dets),self._gmd_accum]
         else: #(motor is not None)
             if isinstance(motor, list): # a list of motors was passed
                 self._motors = motor            
@@ -372,22 +412,27 @@ class DaqScan():
             self.daq.configure(motors=self._motors, record=self.record, events=self.nevents_step)
             att_list = [key for ele in self._motors for key in ele.describe() if 'setpoint' in key]
             att_list.extend([key for ele in self._dets for key in ele.describe()])
-            self._cb['all'] = [LiveTable(att_list)]
+#            att_list.remove('events')
+            self._cb['all'] = [LiveTable(att_list),self._gmd_accum]
 #            self._cb['all'] = [LiveTable(self._motors + self._dets)]
         
         # Include readout of the gmd and xgmd in the bluesky metadata.
         if self.include_gmd:
-            self._dets.append(gmd)
-            self._dets.append(xgmd)
+#            self._dets.append(gmd)
+#            self._dets.append(xgmd)
+            self._flyers.append(gmd)
+            self._flyers.append(xgmd)
         
         # Include readout of two-pulse-two-color in bluesky metadata
         if self.include_tptc:
-            self._dets.append(two_pulse_two_color)
+            #self._dets.append(two_pulse_two_color)
+            self._flyers.append(two_pulse_two_color)
         
         #Include spectrometer data
-        if self.include_fzp:
-            self._dets.append(fzp_det)
-            self._cb['all'].append(LivePlot('fzp_data','fzp_axis'))
+        #09/19/2026: JPC: Removed this function
+#        if self.include_fzp:
+#            self._dets.append(fzp_det)
+#            self._cb['all'].append(LivePlot('fzp_data','fzp_axis'))
             
         #This can be used to ignore the status of a motor during a scan.  
         if not self.wait_for_motor:
@@ -525,7 +570,7 @@ class DaqScan():
             run_num = np.max(runs)
         return run_num
     
-    def _createScanTab(self):
+    def _createScanTab(self, filepath='/sdf/home/t/tmoopr/daq_scan_preproc/'):
         """ Save the scan table to an h5 file. """      
         exp_name = next(filter(lambda s:isinstance(s,str) and 'tmo' in s,  list(daq.control.getStatus())), None)
         run_num = self.run_num
@@ -546,7 +591,8 @@ class DaqScan():
             logger.error('Record State of DAQ is inconsistent.')
             self.daq.control.setRecord(True)
             logger.info('DAQ set to Record state.')
-        self._FILEPATH = '/cds/home/opr/tmoopr/daq_scan_preproc/' + exp_name + '/'
+        #self._FILEPATH = '/cds/home/opr/tmoopr/daq_scan_preproc/' + exp_name + '/'
+        self._FILEPATH = filepath + exp_name + '/'
         self._f_name = 'run%s_scantab.h5' % run_num        
         if not os.path.exists(self._FILEPATH):
             os.makedirs(self._FILEPATH)
@@ -555,6 +601,7 @@ class DaqScan():
         with h5py.File(self._FILEPATH + self._f_name, 'w') as hf_tab:
             hf_tab['names'] = ['step_value'] + [motor.name for motor in self._motors]
             hf_tab['tab'] = self._tab
+            hf_tab['run_start'] = list(datetime.fromtimestamp(self._prev_evt).timetuple()[:6])
             logger.info('Saved scan table to %s' % (self._FILEPATH + self._f_name) )
             
     
@@ -626,19 +673,32 @@ class DaqScan():
                 duty_cycle = float(data.get('daq_record',0) / (doc['time']-self._prev_evt) )
                 self._duty_cycle.append(duty_cycle)        
             if self.include_gmd:
-                self._gmd_data['gmd_avg_int'].extend(data.get('gmd_avg_int',[]))
-                self._gmd_data['xgmd_avg_int'].extend(data.get('xgmd_avg_int',[])) 
-                self._gmd_data['gmd_mj'].extend(data.get('gmd_mj',[]))
-                self._gmd_data['xgmd_mj'].extend(data.get('xgmd_mj',[]))
+#                self._gmd_data['gmd_avg_int'].extend(data.get('gmd_avg_int',[]))
+#                self._gmd_data['xgmd_avg_int'].extend(data.get('xgmd_avg_int',[])) 
+#                self._gmd_data['gmd_mj'].extend(data.get('gmd_mj',[]))
+#                self._gmd_data['xgmd_mj'].extend(data.get('xgmd_mj',[]))
                 if self.include_tptc:
                     self._gmd_data['two_pulse_two_color_p1'].extend(data.get('two_pulse_two_color_p1'))
                     self._gmd_data['two_pulse_two_color_p2'].extend(data.get('two_pulse_two_color_p2'))
-            if self.include_fzp:
-                self._gmd_data.update({'fzp_data':self._gmd_data.get('fzp_data') + data.get('fzp_data')})
+#            if self.include_fzp:
+#                self._gmd_data.update({'fzp_data':self._gmd_data.get('fzp_data') + data.get('fzp_data')})
             if self._fly is not None:
                 self._tab = np.append(self._tab, [[seq_num, data.get(self._fly,[])]], axis=0)
         self._prev_evt = doc['time']
 
+    def _gmd_accum(self, name, doc):
+        if name != 'event_page':
+            return
+        self._doc_page = doc
+        data = doc.get('data', None)
+        if data is not None:
+            if 'gmd_avg_int' in data: self._gmd_data['gmd_avg_int']=data.get('gmd_avg_int',[[]])[0]
+            if 'xgmd_avg_int' in data: self._gmd_data['xgmd_avg_int']=data.get('xgmd_avg_int',[[]])[0]
+            if 'gmd_mj' in data: self._gmd_data['gmd_mj']=data.get('gmd_mj',[[]])[0]
+            if 'xgmd_mj' in data: self._gmd_data['xgmd_mj']=data.get('xgmd_mj',[[]])[0]
+            if 'two_pulse_two_color_p1' in data: self._gmd_data['two_pulse_two_color_p1']=data.get('two_pulse_two_color_p1',[[]])[0]
+            if 'two_pulse_two_color_p2' in data: self._gmd_data['two_pulse_two_color_p2']=data.get('two_pulse_two_color_p2',[[]])[0]
+    
     def _endRun(self, name, doc):
         self._doc_stop = doc
         num_events = doc['num_events'].get('primary',0) 
@@ -657,6 +717,7 @@ class DaqScan():
             self.log_scan()
             if ( self.include_gmd or (self._fly is not None) ):
                 with h5py.File(self._FILEPATH + self._f_name, 'a') as hf_tab:
+                    hf_tab['run_stop'] = list(datetime.fromtimestamp(doc['time']).timetuple()[:6])
                     if self.include_gmd:
                         for key in self._gmd_data.keys():
                             hf_tab[key] = self._gmd_data[key]
@@ -675,7 +736,7 @@ class DaqScan():
                 if hasattr(motor, 'state'):
                     debug_msg = '%s.state is %s' % (motor.name, motor.state)
                 else:
-                    debug_msg = '%s has not attribute state' % (motor.name)
+                    debug_msg = '%s has no attribute state' % (motor.name)
                 logger.debug(debug_msg)
         
     def _setup_freeRun(self, record=False):
@@ -753,10 +814,18 @@ class DaqScan():
         
     def _freeRun(self):
         """Free Run the DAQ after a scan."""
-        prev_rec = self.record 
+        #prev_rec = self.record 
         logger.info('Run complete, starting Free Run')
-        self.untimedRun(False)
-        self.record = prev_rec 
+        #self.untimedRun(False)
+        #self.record = prev_rec 
+        self.daq.configure(record=False, events=-1)
+        self.daq.control.setRecord(False)
+        self.daq.control.setState('running')
+        with self.daq.daqState_cv:
+            while self.daq.daqState != 'running':
+                self.daq.daqState_cv.wait(1.0)
+        print('scan.stopRun() to stop run')
+        
         
     def stopRun(self):
         """
@@ -809,7 +878,7 @@ class DaqScan():
         def temp_plan(num_runs, num_cycles):
             for irep in range(num_runs):
                 yield from bp.count(self._dets, num=num_cycles, md=self._md)
-        RE(temp_plan(num_runs, num_cycles), self._cb )
+        RE( bpp.fly_during_wrapper( temp_plan(num_runs, num_cycles), self._flyers), self._cb )
         self._endScan()
     
     def step(self, motor, start, stop, nstep, nevents_step=None, record=None, restore=True, msg=None):
@@ -843,9 +912,34 @@ class DaqScan():
         """
 
         self._update_scan_param(nevents_step=nevents_step, tot_events=None, max_events_run=None, record=record, restore=restore, motor=motor, msg=msg)       
-        RE(bp.scan(self._dets, motor, start, stop, nstep, per_step=self._per_step, md=self._md), self._cb)
+        RE( bpp.fly_during_wrapper( bp.scan(self._dets, motor, start, stop, nstep, per_step=self._per_step, md=self._md), self._flyers), self._cb)
         self._endScan()                         
            
+    def _lists(self, motor, posList):
+        """
+        Scan "motor" through a list of points. 
+        """    
+#        self._update_scan_param(nevents_step=nevents_step, tot_events=None, max_events_run=None, record=record, restore=restore, motor=motor, msg=msg)
+
+        if isinstance(posList, np.ndarray):
+            posList = posList.tolist()
+        if not isinstance(posList, list):
+            print('you need to pass a list of steps')
+            return      
+        #Scan the list
+        if ( any( isinstance(el, list) for el in posList ) ): #posList is list of lists. Need multiple runs
+            def temp_plan(posList): #define plan to iterate over runs
+                for lst in posList:
+                    #yield from bp.list_scan(self._dets, motor, lst, per_step=self._per_step)
+                    yield from bp.list_scan(self._dets, motor, list(map(float, lst)), per_step=self._per_step, md=self._md)
+            RE( bpp.fly_during_wrapper( temp_plan(posList), self._flyers), self._cb )
+                
+        else: #posList is a list of points to visit  
+            #RE(bp.list_scan(self._dets, motor, posList, per_step=self._per_step), self._cb)
+            RE( bpp.fly_during_wrapper( bp.list_scan(self._dets, motor, list(map(float, posList)), per_step=self._per_step, md=self._md), self._flyers), self._cb)
+        
+        self._endScan()
+            
     def lists(self, motor, posList, nevents_step=None, record=None, restore=True, msg=None):
         """
         Scan "motor" through a list of points. 
@@ -871,26 +965,8 @@ class DaqScan():
         """
     
         self._update_scan_param(nevents_step=nevents_step, tot_events=None, max_events_run=None, record=record, restore=restore, motor=motor, msg=msg)
-
-        if isinstance(posList, np.ndarray):
-            posList = posList.tolist()
-        if not isinstance(posList, list):
-            print('you need to pass a list of steps')
-            return      
-        #Scan the list
-        if ( any( isinstance(el, list) for el in posList ) ): #posList is list of lists. Need multiple runs
-            def temp_plan(posList): #define plan to iterate over runs
-                for lst in posList:
-                    #yield from bp.list_scan(self._dets, motor, lst, per_step=self._per_step)
-                    yield from bp.list_scan(self._dets, motor, list(map(float, lst)), per_step=self._per_step, md=self._md)
-            RE( temp_plan(posList), self._cb )
-                
-        else: #posList is a list of points to visit  
-            #RE(bp.list_scan(self._dets, motor, posList, per_step=self._per_step), self._cb)
-            RE(bp.list_scan(self._dets, motor, list(map(float, posList)), per_step=self._per_step, md=self._md), self._cb)
+        self._lists(motor, posList) 
         
-        self._endScan()
-            
     def random(self, motor, posList, nevents_step=None, tot_events=None, record=None, restore=True, max_events_run=None, msg=None):
         """
         Random scan of a motor. This function will randomly scan the "motor" through the "posList" taking "nevents_step" per step until it has completed at least "tot_events".
@@ -931,7 +1007,8 @@ class DaqScan():
             return
 
         #use list_scan to scan this list. 
-        self.lists(motor, fullList, self.nevents_step, self.record, restore) 
+#        self._lists(motor, fullList, self.nevents_step, self.record, restore) 
+        self._lists(motor, fullList)
     
     def zigzag(self, motor, posList, nevents_step=None, tot_events=None, record=None, restore=True, max_events_run=None, msg=None):
         """
@@ -982,7 +1059,43 @@ class DaqScan():
             return                  
 
         #use list_scan to scan this list. 
-        self.lists(motor, fullList, self.nevents_step, self.record, restore) 
+        self._lists(motor, fullList) 
+            
+    def _lists_dual(self, x_motor, x_list, y_motor, y_list):
+        """
+        Scan two motors (x and y) through a list of points (x_list and y_list). 
+                 
+        """
+        if isinstance(x_list, np.ndarray):
+            x_list = [x_list.tolist()]
+        if not isinstance(x_list, list):
+            print('you need to pass a list of steps for x_motor')
+            return  
+        if isinstance(y_list, np.ndarray):
+            y_list = [y_list.tolist()]
+        if not isinstance(y_list, list):
+            print('you need to pass a list of steps for y_motor')
+            return  
+        if not isinstance(x_list[0], list):
+            x_list=[x_list]
+        if not isinstance(y_list[0], list):
+            y_list=[y_list]
+        if len(x_list[0]) != len(y_list[0]):
+            print('x_list and y_list must have the same length.')
+            return
+
+#        self.daq.control.setState('connected')
+#        self._update_scan_param(nevents_step, None, None, record, restore, [x_motor, y_motor])                                
+#        self._update_scan_param(nevents_step=nevents_step, tot_events=None, max_events_run=None, record=record, restore=restore, motor=[x_motor, y_motor], msg=msg)
+    
+        def temp_plan(x_List, y_List): #define plan to iterate over runs
+            for i, (x_lst, y_lst) in enumerate( zip( x_List, y_List) ):
+                #yield from bp.list_scan(self._dets, x_motor, x_lst, y_motor, y_lst, per_step=self._per_step)
+                yield from bp.list_scan(self._dets, x_motor, list(map(float, x_lst)), y_motor, list(map(float, y_lst)), per_step=self._per_step, md=self._md)
+
+        RE( bpp.fly_during_wrapper( temp_plan(x_list, y_list), self._flyers), self._cb )  
+        
+        self._endScan()           
     
     def lists_dual(self, x_motor, x_list, y_motor, y_list, nevents_step=None, record=None, restore=True, msg=None):
         """
@@ -1012,37 +1125,9 @@ class DaqScan():
             String providing a description of the run to append to the elog post
          
         """
-        if isinstance(x_list, np.ndarray):
-            x_list = [x_list.tolist()]
-        if not isinstance(x_list, list):
-            print('you need to pass a list of steps for x_motor')
-            return  
-        if isinstance(y_list, np.ndarray):
-            y_list = [y_list.tolist()]
-        if not isinstance(y_list, list):
-            print('you need to pass a list of steps for y_motor')
-            return  
-        if not isinstance(x_list[0], list):
-            x_list=[x_list]
-        if not isinstance(y_list[0], list):
-            y_list=[y_list]
-        if len(x_list[0]) != len(y_list[0]):
-            print('x_list and y_list must have the same length.')
-            return
-
-#        self.daq.control.setState('connected')
-#        self._update_scan_param(nevents_step, None, None, record, restore, [x_motor, y_motor])                                
         self._update_scan_param(nevents_step=nevents_step, tot_events=None, max_events_run=None, record=record, restore=restore, motor=[x_motor, y_motor], msg=msg)
-    
-        def temp_plan(x_List, y_List): #define plan to iterate over runs
-            for i, (x_lst, y_lst) in enumerate( zip( x_List, y_List) ):
-                #yield from bp.list_scan(self._dets, x_motor, x_lst, y_motor, y_lst, per_step=self._per_step)
-                yield from bp.list_scan(self._dets, x_motor, list(map(float, x_lst)), y_motor, list(map(float, y_lst)), per_step=self._per_step, md=self._md)
-
-        RE( temp_plan(x_list, y_list), self._cb )  
+        self._lists_dual(x_motor, x_list, y_motor, y_list)
         
-        self._endScan()           
-
     def xy_outer(self, x_motor, x_list, y_motor, y_list, nevents_step=None, tot_events=None, record=None, scan_type =['z','z'], restore=True, max_events_run=None, msg=None):
         """
         Scan two motors (x and y). This function will scan the "x_motor" through the "x_list" while also scanning through the "y_list" with the "y_motor," taking "nevents_step" per step until it has completed at least "tot_events".
@@ -1098,7 +1183,7 @@ class DaqScan():
         if ( (y_List[0] is None) or (x_List[0] is None) ):
             return
 
-        self.lists_dual(x_motor, x_List, y_motor, y_List, self.nevents_step, self.record, restore)
+        self._lists_dual(x_motor, x_List, y_motor, y_List)
     
     def xy_zip(self, x_motor, x_list, y_motor, y_list, nevents_step=None, tot_events=None, record=None, restore=True, max_events_run=None, msg=None):
         """
@@ -1156,7 +1241,7 @@ class DaqScan():
         if ( (y_List[0] is None) or (x_List[0] is None) ):
             return
         
-        self.lists_dual(x_motor, x_List, y_motor, y_List, self.nevents_step, self.record, restore)  
+        self._lists_dual(x_motor, x_List, y_motor, y_List)  
 
            
     def multi_motor_outer(self, *args, nevents_step=None, tot_events=None, record=None, restore=True, msg=None):
@@ -1217,7 +1302,7 @@ class DaqScan():
             argList[2*i+1] = _BuildList(list(map(float, List)), 'z', self.nevents_step, self.tot_events, max_events_run=-1, repeat=repeat)
             repeat = repeat * len(List)
                     
-        RE( bp.list_scan(self._dets, *tuple(argList), per_step=self._per_step, md=self._md), self._cb )
+        RE( bpp.fly_during_wrapper( bp.list_scan(self._dets, *tuple(argList), per_step=self._per_step, md=self._md), self._flyers), self._cb )
         
         self._endScan()          
 
@@ -1278,14 +1363,14 @@ class DaqScan():
             #argList[2*i+1] = _BuildList(List, 'f', self.nevents_step, self.tot_events, max_events_run=-1, repeat=1)
             argList[2*i+1] = _BuildList(list(map(float,List)), 'f', self.nevents_step, self.tot_events, max_events_run=-1, repeat=1)
             
-        RE( bp.list_scan(self._dets, *tuple(argList), per_step=self._per_step, md=self._md), self._cb ) 
+        RE( bpp.fly_during_wrapper( bp.list_scan(self._dets, *tuple(argList), per_step=self._per_step, md=self._md), self._flyers), self._cb ) 
         
         self._endScan()
                        
     def tweak(self, motor, step=0, nevents_step=None, record=None, restore=False, msg=None):
         self.profile=False
         self._update_scan_param(nevents_step=nevents_step, tot_events=None, max_events_run=None, record=record, restore=restore, motor=motor, msg=msg)                 
-        RE( bp.tweak(self.daq,'events', motor, step, md=self._md), self._cb )
+        RE( bpp.fly_during_wrapper( bp.tweak(self.daq,'events', motor, step, md=self._md), self._flyers), self._cb )
         self._endScan()
     
     def adaptive_step_find(self, feedback_device, motor, start, limits, step_level, threshold_step,  nevents_cycle=None, record=None):
@@ -1349,8 +1434,8 @@ class DaqScan():
                 plt.hist(self._gmd_data['two_pulse_two_color_p2'],tptc_bin)
                 plt.title('P2 pulse energy')
                 plt.xlabel('pulse energy (mJ)')
-                if self._elog_gmd_scale is not None:
-                    plt.xlim(self._elog_gmd_scale)
+                if self._elog_xgmd_scale is not None:
+                    plt.xlim(self._elog_xgmd_scale)
                 else:
                     plt.xlim([0,0.005])
             else:
@@ -1388,6 +1473,29 @@ class DaqScan():
                 else:
                     elog.post('Pulse energy data', attachments=['tmoopr_elog_plots/gmd_fig.png'], tags='daq_scan script-generated')
                    
+    def check_supports(self, device=None):
+        """ Check the protocols that a device might need to be used as a motor"""
+        device = device if device is not None else self._motors[0]
+        protocol_list = [Stageable, Triggerable, Readable, Locatable, Movable, Flyable, Subscribable]
+        requirements_list = ["Stageable'>", "Triggerable'>", "Readable'>", "Movable'>"]
+        protocol_dict = OrderedDict()
+        require_dict = OrderedDict()
+        has_protocol = []
+        for protocol in protocol_list:
+            key = repr(protocol).split('.')[-1]
+            result = isinstance(device, protocol)
+            if result:
+                has_protocol.append(key)
+            protocol_dict.update({key:result})
+            require_dict.update({key:(key in requirements_list)})
+        infoDF = pd.DataFrame({"Protocol:": protocol_dict.keys(), "Result:": protocol_dict.values(), 'Required:': require_dict.values()})
+        infoDF_str = tabulate(infoDF, headers="keys", tablefmt="pretty")
+        print(infoDF_str)
+        all_met = set(requirements_list).issubset(has_protocol)
+        return all_met
+            
+    
+
 #from tmo.db import daq
 scan = DaqScan(daq)
 
@@ -1405,7 +1513,7 @@ daq_stats = DaqStats('DAQ:NEH:tmo:0',name='damage_stats')
 
 def get_hsd(py_file=None, log=False, **kwargs):
     if py_file is None:
-        py_file = 'daq/tmo.py'
+        py_file = 'daq/scripts/tmo.py'
     with open(py_file,'r') as f:
         stop_read = False
         read_str = ''
@@ -1504,85 +1612,3 @@ class FzpDataWDaq(FzpDataWoDaq):
 tmo_fzp_data = FzpDataWoDaq(name='tmo_fzp_data') 
 
         
-class OldFly():
-    def fly(self, motor, start, limits=[-1,1], nevents_cycle=None, record=None):
-        """
-        "Fly" scan with the DAQ.
-        Parameters:
-        -----------
-        motor: motor to fly scan.
-    
-        start: float,
-            Starting position of motor.
-    
-        limits: list of floats,
-            Limits for fly scan. If the requested position is outside the limits, no step is made
-    
-        nevents_cycle: int, 
-            Number of events between screen updates, default is 1 sec at 120 Hz (120 events). 
-    
-        record: bool,
-            Flag to tell DAQ to save the run.
-    
-        """           
-        self._update_scan_param(nevents_cycle, None, None, record, False)
-        self.daq.control.setState('connected')
-        self._motors=[motor]
-        self._initial_pos=[]
-        self.daq.configure(record=self.record, events=self.nevents_step, motors=self._motor)
-        dets = [self.daq]
-        
-        RE(self._fly_scan(dets, motor, start, limits, num=self.nevents_step), {"start":self._startRun, "stop":self._endRun})
-    
-    def _fly_scan(self, detectors, motor, start, limits, num=1):
-    
-        md = {'detectors': [det.name for det in detectors],
-               'motors': [motor.name],
-               'extents': tuple([min(limits), max(limits)]),
-               'plan_args': {'detectors': list(map(repr, detectors)),
-                             'motor': repr(motor)},
-               'plan_name': 'fly_scan',
-               'hints': {},
-               }
-    
-        @bpp.stage_decorator(list(detectors) + [motor])
-        @bpp.run_decorator(md=md)
-        def fly_core():
-            global next_pos
-            global done
-    
-            next_pos = start
-            done = False
-            
-            def is_number(n):
-                try:
-                    float(n)
-                    return True
-                except ValueError:
-                    return False         
-        
-            def thread_keyboard():
-                global next_pos
-                global done
-                done = False
-                next_pos = start
-                lock = threading.Lock()
-                while not done:
-                    with lock:
-                        u_input = input("Next point (q to quit): ")
-                        if is_number(u_input):
-                            if (min(limits) <= float(u_input) <= max(limits)):
-                                next_pos = float(u_input)
-                            done = False
-                        elif u_input == 'q':
-                            done = True
-    
-            threading.Thread(target = thread_keyboard).start()
-    
-            while not done:
-                pos_cache = defaultdict(lambda: None)
-                step = {motor:next_pos}
-                yield from bps.one_nd_step(detectors, step, pos_cache)
-    
-             
-        return (yield from fly_core())

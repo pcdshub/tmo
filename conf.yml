@@ -2,6 +2,10 @@ hutch: tmo
 
 # Locate happi database
 db: /reg/g/pcds/pyps/apps/hutch-python/device_config/db.json
+load_level: UPSTREAM
+additional_devices:
+  tmo_non_lp:
+    beamline: TMO
 
 # Hutch-specific imports
 load: tmo.beamline

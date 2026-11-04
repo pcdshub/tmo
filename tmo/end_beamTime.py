@@ -11,10 +11,10 @@ from tmo.tmo_imager_align import tmo_imagers
 from tmo.tmo_mpods import tmo_mpod, get_mpod
 from tmo.tmo_pdu import tmo_pdu
 from tmo.tmo_beckoff import tmo_beckoff
-from tmo.tmo_mbes_utility import ortec_ps
+#from tmo.tmo_mbes_utility import ortec_ps
 from tmo.tmo_dream_utils import tmo_dream_coil
-from tmo.tmo_endstation import get_mrco_motion, get_lamp_motion, get_dream_motion
-from tmo.tmo_endstation import tmo_mrco_vcn, get_mrco_vcn, tmo_lamp_vcn, get_lamp_vcn
+from tmo.tmo_endstation import get_mrco_motion, get_lamp_motion, get_dream_motion, get_mbes_motion
+from tmo.tmo_endstation import tmo_mrco_vcn, get_mrco_vcn, tmo_lamp_vcn, get_lamp_vcn, tmo_mbes_vcn, get_mbes_vcn
 from tmo.lxt2 import get_timing, get_laser_tpr
 import logging
 from pcdsdevices.slits import SL2K4Slits as sl2k4
@@ -107,11 +107,12 @@ def end_of_beamtime(skip_pmps=False):
         sp1k4_intensifier.disable() # on 20250315 TD commented this out (then back in) because the PV was timing out
         time.sleep(2)
     
-    logger.info('Closing Stoppers...')
-    st4k4.insert_signal.put(1)
-    st1k4.state('IN')
-    time.sleep(5)
+#    logger.info('Closing Stoppers...')
+#    st4k4.insert_signal.put(1)
+#    st1k4.state('IN')
+#    time.sleep(5)
     get_stprs()
+#    st3k4_pps.in_signal.unsubscribe_all()
     time.sleep(2)
     
     logger.info('Closing vacuum gate valves....')
@@ -138,14 +139,39 @@ def end_of_beamtime(skip_pmps=False):
     logger.info('Logging HV...')
     get_mpod(log=True, msg='HV settings at end of shift', tags='script-generated')
     logger.info('Shutting off HV...')
+    
     if tmo_dream.connected: #Turn off DREAM amplifiers
-        tmo_pdu.dream_pdu.ch7.off()
-        tmo_pdu.dream_pdu.ch8.off()
         tmo_dream_coil.off()
+        for c_name in dir(tmo_pdu.dream_pdu):
+            ch = getattr(tmo_pdu.dream_pdu, c_name)
+            if hasattr(ch, 'desc'):
+                if 'ARR-15' in ch.desc.get():
+                    ch.off()
+                    logger.info('%s PS off' % ch.desc.get())
+            
     if tmo_lamp.connected: #Turn off LAMP Amplifiers
-        tmo_pdu.lamp_pdu.ch6.off()
+        for c_name in dir(tmo_pdu.lamp_pdu):
+            ch = getattr(tmo_pdu.lamp_pdu, c_name)
+            if hasattr(ch, 'desc'):
+                if 'ortec' in ch.desc.get():
+                    ch.off()
+                    logger.info('%s PS off' % ch.desc.get())
+    
     if tmo_mrco.connected: #Turn off MRCO amplifiers 
-        tmo_beckoff.dout_1.off()
+        for i in range(1,9):
+            ch = getattr(tmo_beckoff, 'dout_%d'%i)
+            if 'Amplifiers' in ch.desc.get():
+                ch.off()
+                logger.info('%s PS off' % ch.desc.get())
+    
+    if tmo_mbes.connected:
+        for c_name in dir(tmo_pdu.cvmi_pdu):
+            ch = getattr(tmo_pdu.cvmi_pdu, c_name)
+            if hasattr(ch, 'desc'):
+                if 'ortec' in ch.desc.get():
+                    ch.off()
+                    logger.info('%s PS off' % ch.desc.get())
+        
     #stop the MPOD.
     tmo_mpod.all_off()
     for ch_name in dir(tmo_mpod):
@@ -189,18 +215,24 @@ def end_of_beamtime(skip_pmps=False):
     if tmo_mrco.connected:
         logger.info('Logging MRCO positions')
         get_mrco_motion(log=True, msg='MRCO positions at end of shift.', tags='script-generated')
+    if tmo_mbes.connected:
+        logger.info('logging MBES positions')
+        get_mbes_motion(log=True, msg='MBES positions at end of shift.', tags='script-generated')
     if tmo_dream.connected:
         logger.info('Logging DREAM positions')
         get_dream_motion(log=True, msg='DREAM positions at end of shift.', tags='script-generated')
     time.sleep(2)
     
     logger.info('Stopping sample delivery, closing gas needle...')
-    if tmo_lamp.connected:
+    if tmo_lamp_vcn.connected:
         get_lamp_vcn(log=True, msg='LAMP VCN at end of shift', tags='script-generated')
         tmo_lamp_vcn.close_valve()
-    if tmo_mrco.connected:
+    if tmo_mrco_vcn.connected:
         get_mrco_vcn(log=True, msg='MRCO VCN at end of shift', tags='script-generated')
         tmo_mrco_vcn.close_valve()
+    if tmo_mbes_vcn.connected:
+        get_mbes_vcn(log=True, msg='MBES VCN at end of shift', tags='script-generated')
+        tmo_mbes_vcn.close_valve()
 #    if tmo_dream.connected:
 #        tmo_beckoff.dout_2.off() #stop nozzle A delivery for DREAM
 #        tmo_beckoff.dout_3.off() #stop nozzle B delivery for DREAM

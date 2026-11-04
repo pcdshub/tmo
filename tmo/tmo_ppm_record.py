@@ -2,10 +2,14 @@ from tmo.db import RE, bp, elog
 from tmo.tmo_optics import get_KB1, get_KB2
 from tmo.db import im3k4, im4k4, im5k4, im6k4
 from ophyd.signal import EpicsSignal
+from ophyd.status import DeviceStatus
 from bluesky.callbacks import CallbackBase
 from bluesky.callbacks.mpl_plotting import LivePlot
 from bluesky.preprocessors import monitor_during_wrapper, fly_during_wrapper
 from tmo.tmo_beamline_control import gmd, xgmd, tmo_beamline_cntl
+from pcdsdevices.device import Device
+from pcdsdevices.interface import BaseInterface
+from pcdsdevices.device import ObjectComponent as OCpt
 from collections import OrderedDict
 from tmo.tmo_daq_scans import scan
 import numpy as np
@@ -30,6 +34,7 @@ class PPMCallback(CallbackBase):
         self.msg = doc.get('purpose', None)
         self.deviceName = doc['detector'] 
         self.data['background'] = doc.get('background', '')
+        self.data['responsivity'] = doc.get('responsivity','')
         self.data['beam rate'] = doc.get('beam rate', '')
         self.data['transmission'] = doc.get('transmission', '')
         self.data['nominal photon energy'] = doc.get('nominal photon energy', '')
@@ -60,7 +65,10 @@ class PPMCallback(CallbackBase):
             else:
                 self.data[(key + ' timestamp')].append(doc['timestamps'][key])       
         return
-
+    
+    def event_page(self, doc):
+        self._event_page_doc = doc
+    
     def stop(self, doc):
         self._end_doc = doc
         self._f_name += '_%s.h5' % (datetime.datetime.now().strftime("%Y-%m-%d--%H-%M-%S"))
@@ -76,6 +84,106 @@ class PPMCallback(CallbackBase):
             elog.post(msg=self.msg, tags='ppm_data')
         return
 
+class TmoPpm(BaseInterface, Device):
+    im3k4 = OCpt(im3k4.power_meter)
+    im4k4 = OCpt(im4k4.power_meter)
+    im5k4 = OCpt(im5k4.power_meter)
+    im6k4 = OCpt(im6k4.power_meter)
+    
+    def __init__(self, det_name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.detector = getattr(self, det_name)
+        self._acquiring=False
+        self._paused=False
+        self._fly_data={}
+        return
+    
+    def describe(self):
+        return self.detector.calibrated_mj.describe()
+    
+    def stage(self):
+        return self.detector.calibrated_mj.stage()
+
+    def trigger(self):
+        def mark_done(self, old_value, value, timestamp, **kwargs):
+            if type(old_value) == float:
+                status.set_finished()
+            return
+        status = DeviceStatus(self.detector)
+        self.detector.calibrated_mj.subscribe(mark_done)
+        self.detector.calibrated_mj.trigger()
+        return status
+    
+    def read(self):
+        self.detector.calibrated_mj.unsubscribe_all()
+        return self.detector.calibrated_mj.read()
+    
+    def unstage(self):
+        return self.detector.calibrated_mj.unstage()
+    
+    def _data_cb(self, value, timestamp, **kwargs):
+        obj = kwargs['obj']
+        self.data[obj.name]['value'].extend(value)
+        self.data[obj.name]['timestamp'].append(timestamp)
+        
+    def kickoff(self):
+        if self._acquiring:
+            raise RuntimeError("Kicking off a second time?!")      
+        self._fly_data={}
+        self._fly_data[self.detector.calibrated_mj_buffer.name]={'value':[], 'timestamp':[]}
+        self.detector.calibrated_mj_buffer.subscribe(self._data_cb)
+        self._start_time = time.time()
+        self._acquiring = True
+        self._paused = False
+        
+        kickoff_st = DeviceStatus(device=self)
+        kickoff_st.set_finished()
+        return kickoff_st
+    
+    def pause(self):
+        '''Pause acquisition'''
+        logger.debug('called .pause')
+        if not self._acquiring:
+            return
+        self.detector.calibrated_mj_buffer.unsubscribe_all()
+        self._paused = True
+    
+    def resume(self):
+        '''Resume acquisition'''
+        logger.debug('called .resume')
+        if not self._acquiring:
+            return
+        if not self._paused:
+            return
+        self.detector.calibrated_mj_buffer.subscribe(self._data_cb)
+        self._paused = False
+        
+    def complete(self):
+        if not self._acquiring:
+            raise RuntimeError("No collection in progress")
+        self.detector.calibrated_mj_buffer.unsubscribe_all()
+        self._acquiring = False #not acquiring
+        self._paused = False #not paused
+        
+        completion_status = DeviceStatus(self)
+        completion_status.set_finished()
+        return completion_status
+            
+    def describe_collect(self):
+        return self.detector.calibrated_mj_buffer.describe()
+            
+    def collect(self):
+        if self._acquiring:
+            raise RuntimeError('Acquisition still in progress. Call complete() first.')
+        timestamps={}
+        value={}
+        for attr, data in self._fly_data.items():
+            timestamps[attr]=data['timestamp']
+            value[attr]=data['value']
+        yield dict(time=self._start_time,
+            timestamps=timestamps,
+            data=value)
+    
 class PPM_recorder():
     """
     Class for recording data from the power meters. 
@@ -105,19 +213,16 @@ class PPM_recorder():
         None.
 
         """
+        if type(ppm) == str:
+            ppm = TmoPpm(ppm, name=ppm)
+        else:
+            ppm = TmoPpm(ppm.name, name=ppm.name)
         self.save_data = save_data if save_data is not None else self.save_data
-        det = [ppm.power_meter.calibrated_mj, 
-               ppm.power_meter.calibrated_mj_buffer,
-               ppm.power_meter.raw_voltage,
-               tmo_beamline_cntl.transmission,
-               gmd.avg_int, xgmd.avg_int]
-        det_count = [ppm.power_meter.calibrated_mj]
-        det_monitor = [ppm.power_meter.calibrated_mj_buffer,
-                       ppm.power_meter.raw_voltage,
-                       tmo_beamline_cntl.transmission,
-                       gmd.avg_int, xgmd.avg_int]
-        self._md.update({'detector': ppm.name,
-                       'background': ppm.power_meter.background_voltage.get(),
+        det = [ppm]
+        fly_list = [gmd, xgmd, ppm]
+        self._md.update({'detector': ppm.detector.name,
+                       'background': ppm.detector.background_voltage.get(),
+                      'responsivity':ppm.detector.responsivity.get(),
                           'purpose': msg,
                         'beam rate': tmo_beamline_cntl.rate.get(),
                      'transmission': tmo_beamline_cntl.transmission.get(),
@@ -126,8 +231,8 @@ class PPM_recorder():
         self._cb.save_data = self.save_data
         
 #        RE(monitor_during_wrapper(bp.count(det_count, num=num_samples, md=self._md), det_monitor), [LivePlot(ppm.power_meter.calibrated_mj.name), self._cb])
-#        RE(fly_during_wrapper(bp.count(det_count, num=num_samples, md=self._md), det_monitor), [LivePlot(ppm.power_meter.calibrated_mj.name), self._cb])
-        RE(bp.count(det,num=num_samples, md=self._md), [LivePlot(ppm.power_meter.calibrated_mj.name), self._cb])
+        RE(fly_during_wrapper(bp.count(det, num=num_samples, md=self._md), fly_list), [LivePlot(ppm.detector.calibrated_mj.name), self._cb])
+#        RE(bp.count(det,num=num_samples, md=self._md), [LivePlot(ppm.detector.calibrated_mj.name), self._cb])
       
     def record_with_daq(self, ppm, num_samples):
         scan.untimedRun(record=True)

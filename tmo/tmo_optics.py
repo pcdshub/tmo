@@ -565,168 +565,333 @@ def get_slits(slits=sl1k4, log=False, msg=None, update_preset=False, include_cam
                 msg = update_msg
     _log_positions(curr_positions, log=log, msg=msg, include_cam=include_cam, **kwargs)
 
-def reset_sl1k0(move_centers=True):
-    """
-    Reset to the maximum size allowed by PMPS based on the apertures. 
-
-    Parameters
-    ----------
-    move_centers : bool, optional
-        Moves the centers to facilitate the largest gap. The default is True.
-
-    """
-    pmps_dict={'5.5mm': 2.95, '8mm': 6.95, '10mm': 8.45, '13mm': 8.75}
-    key = at1k0.apperture_array.maa_01.position
-    get_slits(sl1k0, log=True, msg='SL1K0 slit position before adjusting')
-    
-    vo = sl1k0.vo.wm()
-    ho = sl1k0.ho.wm()
-    
-    if move_centers:
-        if vo > 0.015: sl1k0.vo.umv(0)
-        if ho > 0.015: sl1k0.ho.umv(0)
-        sl1k0.vg.umv(pmps_dict[key])
-        sl1k0.hg.umv(pmps_dict[key])
-    else:    
-        sl1k0.vg.umv(pmps_dict[key]-2*vo)
-        sl1k0.hg.umv(pmps_dict[key]-2*ho)
-        
-    get_slits(sl1k0, log=True, msg='new SL1K0 slit positions after moving')
-
-def reset_slits(preset='tmo', home=False):
-    """ Reset slits to previous saved position. home function will home SL1K4."""
-    
-    get_slits([sl2k0,sl1k4], log=True, msg='current slit positions before moving to %s preset.' % preset)
-    axes = ['north','south','top','bottom']
-    
-    def _wait_for_move():
+class TmoSlitTool:
+    def __init__(self):
+        self.pmps_dict={'5.5mm': 2.95, '8mm': 6.95, '10mm': 8.45, '13mm': 8.75}
+        self.axes = ['north','south','top','bottom']
+        self.attr = ['vg','vo','hg','ho']
+        self.slits=[sl1k4]
+     
+    def _wait_for_move(self, slit_list):
+        """ wait for slits to stop moving"""
         time.sleep(1)
         done_moving = False
         while not done_moving:
             done_moving = True
-            for slits in [sl2k0,sl1k4]: 
-                for axis in axes:
+            for slits in slit_list: 
+                for axis in self.axes:
                     motor = getattr(slits, axis)
                     done_moving = done_moving and (not motor.moving) 
-         
-    if home: #home sl1k4
-        for axis in axes:
-            motor = getattr(sl1k4, axis)
-            motor.home(wait=False)
-            logger.debug('homing %s' % motor.name)
-#        done_moving = False
-        logger.info('homing sl1k4')
-#        time.sleep(1)
-#        while not done_moving:
-#            done_moving = True
-#            for axis in axes:
-#                motor = getattr(sl1k4, axis)
-#                done_moving = done_moving and (not motor.moving) 
-        _wait_for_move()
-        #clear any errors
-        time.sleep(1)
-        logger.debug('clearing errors')
-        for axis in axes:
-            motor = getattr(sl1k4, axis)
-            motor.clear_error()
-        logger.info('homing complete')
-        
-    #move slits to presets    
-    for slits in [sl2k0,sl1k4]:    
-        for axis in axes:
-            motor = getattr(slits, axis)
-            motor.presets.sync()
-            motor.clear_error() #clear any errors before moving
-            mv = getattr(motor, 'mv_'+preset)
-            mv()        
     
-    #check all slits are done moving
-    _wait_for_move()
-#    time.sleep(1)
-#    done_moving = False
-#    while not done_moving:
-#        done_moving = True
-#        for slits in [sl2k0,sl1k4]: 
-#            for axis in axes:
-#                motor = getattr(slits, axis)
-#                done_moving = done_moving and (not motor.moving) 
+    def home_slits(self, slit_list):
+        """home slits"""
+        for slit in slit_list:
+            for axis in self.axes:
+                motor = getattr(slit, axis)
+                motor.home(wait=False)
+                logger.debug('homing %s' % motor.name)
+            logger.info('homing %s' % slit.name)
+            self._wait_for_move([slit])
+            time.sleep(1)
+            logger.debug('clearing errors')
+            for axis in self.axes:
+                motor = getattr(slit, axis)
+                motor.clear_error()
+            logger.info('homing complete')
     
-    #hacky fix to a problem with using the presets on each motor and removing old values from memory.
-    #this writes the current position to the set position.
-    for slits in [sl2k0,sl1k4]:
-        pos = {}
-        for axis in ['vg','vo','hg','ho']:
-            motor = getattr(slits,axis)
-            pos.update({axis:motor.wm()})
-        for i in range(2):
-            for axis in ['vg','hg','vo','ho']:
+    def _fix_gap(self, slit_list):
+        """
+        hacky fix to a problem with using the presets on each motor and removing old values from memory.
+        this writes the current position to the set position.
+        """
+        for slits in slit_list:
+            pos = {}
+            for axis in self.attr:
                 motor = getattr(slits,axis)
-                #motor.mv(pos[key])
-                motor.setpoint.put(pos[axis])
-            time.sleep(1)   
-
-    #check all slits are done moving
-    _wait_for_move()
-#    done_moving = False
-#    while not done_moving:
-#        done_moving = True
-#        for slits in [sl2k0,sl1k4]: 
-#            for axis in axes:
-#                motor = getattr(slits, axis)
-#                done_moving = done_moving and (not motor.moving) 
-            
-    #log changes to the slits
-    get_slits([sl2k0,sl1k4], log=True, msg=('Moved slits to previous %s preset position' % preset))
-#    reset_sl1k0()
-
-def open_slits(gaps=None):
-    """
-    Log the current positions and open sl1k4 and sl2k0 slits. 
-
-    Parameters
-    ----------
-    gaps : list of floats, optional
-        List of slit gaps [sl2k0, sl1k4]. The default is [10,14].
+                pos.update({axis:motor.wm()})
+            for i in range(2): #you need to do it twice
+                for axis in self.attr:
+                    motor = getattr(slits,axis)
+                    #motor.mv(pos[key])
+                    motor.setpoint.put(pos[axis])
+                time.sleep(1) 
+        
+        #check all slits are done moving
+        self._wait_for_move(slit_list)
+        
+    def reset_sl1k0(self, move_centers=True):
+        """
+        Reset to the maximum size allowed by PMPS based on the apertures. 
     
-    """
+        Parameters
+        ----------
+        move_centers : bool, optional
+            Moves the centers to facilitate the largest gap. The default is True.
+    
+        """
+        key = at1k0.apperture_array.maa_01.position
+        get_slits(sl1k0, log=True, msg='SL1K0 slit position before adjusting')
+        
+        vo = sl1k0.vo.wm()
+        ho = sl1k0.ho.wm()
+        vg = sl1k0.vg.wm()
+        hg = sl1k0.hg.wm()
+        if move_centers:
+            vt = self.pmps_dict[key]
+            ht = self.pmps_dict[key]
+        else:
+            vt = self.pmps_dict[key]-2*abs(vo)
+            ht = self.pmps_dict[key]-2*abs(ho)
+                  
+        if (move_centers and abs(vo) > 0.015): sl1k0.vo.mv(0)
+        if (move_centers and abs(ho) > 0.015): sl1k0.ho.mv(0)
+        if ( abs(vt-vg)/vg > 0.02 ): sl1k0.vg.umv(vt)
+        else: sl1k0.vg.mv(vt)
+        if ( abs(ht-hg)/hg > 0.02 ): sl1k0.hg.umv(ht)
+        else: sl1k0.hg.mv(ht)    
+            
+        get_slits(sl1k0, log=True, msg='new SL1K0 slit positions after moving')
+    
+    def reset_slits(self, preset='tmo', home=False):
+        """ Reset slits to previous saved position. home function will home SL1K4."""
+        
+        get_slits([sl2k0,sl1k4], log=True, msg='current slit positions before moving to %s preset.' % preset)
+        
+        if home:
+            self.home_slits([sl1k4])
+        
+        #move slits to presets    
+        for slits in [sl2k0,sl1k4]:    
+            for axis in self.axes:
+                motor = getattr(slits, axis)
+                motor.clear_error()
+                motor.presets.sync()
+                motor.clear_error() #clear any errors before moving
+                mv = getattr(motor, 'mv_'+preset)
+                mv()        
+        
+        #check all slits are done moving
+        self._wait_for_move([sl2k0,sl1k4])
+        
+        #hacky fix to a problem with using the presets on each motor and removing old values from memory.
+        #this writes the current position to the set position.
+        self._fix_gap([sl2k0,sl1k4])   
+    
+                
+        #log changes to the slits
+        get_slits([sl2k0,sl1k4], log=True, msg=('Moved slits to previous %s preset position' % preset))
+    #    reset_sl1k0()
+    
+    def open_slits(self, gaps=None, home=False):
+        """
+        Log the current positions and open sl1k4 and sl2k0 slits. 
+    
+        Parameters
+        ----------
+        gaps : list of floats, optional
+            List of slit gaps [sl2k0, sl1k4]. The default is [10,14].
+        
+        """
+    
+        if gaps is not None:
+            get_slits([sl2k0,sl1k4], log=True, msg='current slit positions before opening.')
+            if home:
+                self.home_slits([sl1k4])
+            sl2k0.hg.umv(gaps[0])
+            sl2k0.vg.umv(gaps[0])
+            sl1k4.hg.umv(gaps[1])
+            sl1k4.vg.umv(gaps[1])
+        else:
+            self.reset_slits(preset='open', home=home)
+        
+    def tweak_slits(self, gap=None, x=None, y=None):
+        """
+        Adjust SL2K0 and SL1K4 together. 
+    
+        Parameters
+        ----------
+        gap : float, optional
+            Value to increase/decrease the gap size. The default is None.
+        x : float, optional
+            Value to shift the horizontal offset. The default is None.
+        y : float, optional
+            Value to shift the vertical offset. The default is None.
+    
+        """
+        
+        if gap is not None:
+            sl2k0.hg.mvr(gap)
+            sl2k0.vg.mvr(gap)
+            sl1k4.hg.mvr(gap)
+            sl1k4.vg.mvr(gap)
+    
+        if x is not None:
+            sl2k0.ho.mvr(x)
+            sl1k4.ho.mvr(x)
+            
+        if y is not None:
+            sl2k0.vo.mvr(y)
+            sl1k4.vo.mvr(y)
 
-    if gaps is not None:
-        get_slits([sl2k0,sl1k4], log=True, msg='current slit positions before opening.')
-        sl2k0.hg.umv(gaps[0])
-        sl2k0.vg.umv(gaps[0])
-        sl1k4.hg.umv(gaps[1])
-        sl1k4.vg.umv(gaps[1])
-    else:
-        reset_slits(preset='open')
+tmo_slit_tool=TmoSlitTool()
+
+def reset_sl1k0(move_centers=True):
+    tmo_slit_tool.reset_sl1k0(move_centers=move_centers)
+reset_sl1k0.__doc__ = tmo_slit_tool.reset_sl1k0.__doc__
+
+def reset_slits(preset='tmo', home=False):
+    tmo_slit_tool.reset_slits(preset=preset, home=home)
+reset_slits.__doc__ = tmo_slit_tool.reset_slits.__doc__
+    
+def open_slits(gaps=None, home=False):
+    tmo_slit_tool.open_slits(gaps=gaps, home=home)
+open_slits.__doc__ = tmo_slit_tool.open_slits.__doc__
     
 def tweak_slits(gap=None, x=None, y=None):
-    """
-    Adjust SL2K0 and SL1K4 together. 
-
-    Parameters
-    ----------
-    gap : float, optional
-        Value to increase/decrease the gap size. The default is None.
-    x : float, optional
-        Value to shift the horizontal offset. The default is None.
-    y : float, optional
-        Value to shift the vertical offset. The default is None.
-
-    """
+    tmo_slit_tool.tweak_slits(gap=gap, x=x, y=y)
+tweak_slits.__doc__ = tmo_slit_tool.tweak_slits.__doc__
     
-    if gap is not None:
-        sl2k0.hg.mvr(gap)
-        sl2k0.vg.mvr(gap)
-        sl1k4.hg.mvr(gap)
-        sl1k4.vg.mvr(gap)
+# def reset_sl1k0(move_centers=True):
+#     """
+#     Reset to the maximum size allowed by PMPS based on the apertures. 
 
-    if x is not None:
-        sl2k0.ho.mvr(x)
-        sl1k4.ho.mvr(x)
+#     Parameters
+#     ----------
+#     move_centers : bool, optional
+#         Moves the centers to facilitate the largest gap. The default is True.
+
+#     """
+#     pmps_dict={'5.5mm': 2.95, '8mm': 6.95, '10mm': 8.45, '13mm': 8.75}
+#     key = at1k0.apperture_array.maa_01.position
+#     get_slits(sl1k0, log=True, msg='SL1K0 slit position before adjusting')
+    
+#     vo = sl1k0.vo.wm()
+#     ho = sl1k0.ho.wm()
+    
+#     if move_centers:
+#         if vo > 0.015: sl1k0.vo.umv(0)
+#         if ho > 0.015: sl1k0.ho.umv(0)
+#         sl1k0.vg.umv(pmps_dict[key])
+#         sl1k0.hg.umv(pmps_dict[key])
+#     else:    
+#         sl1k0.vg.umv(pmps_dict[key]-2*vo)
+#         sl1k0.hg.umv(pmps_dict[key]-2*ho)
         
-    if y is not None:
-        sl2k0.vo.mvr(y)
-        sl1k4.vo.mvr(y)
+#     get_slits(sl1k0, log=True, msg='new SL1K0 slit positions after moving')
+
+# def reset_slits(preset='tmo', home=False):
+#     """ Reset slits to previous saved position. home function will home SL1K4."""
+    
+#     get_slits([sl2k0,sl1k4], log=True, msg='current slit positions before moving to %s preset.' % preset)
+#     axes = ['north','south','top','bottom']
+    
+#     def _wait_for_move():
+#         time.sleep(1)
+#         done_moving = False
+#         while not done_moving:
+#             done_moving = True
+#             for slits in [sl2k0,sl1k4]: 
+#                 for axis in axes:
+#                     motor = getattr(slits, axis)
+#                     done_moving = done_moving and (not motor.moving) 
+         
+#     if home: #home sl1k4
+#         for axis in axes:
+#             motor = getattr(sl1k4, axis)
+#             motor.home(wait=False)
+#             logger.debug('homing %s' % motor.name)
+# #        done_moving = False
+#         logger.info('homing sl1k4')
+#         _wait_for_move()
+#         #clear any errors
+#         time.sleep(1)
+#         logger.debug('clearing errors')
+#         for axis in axes:
+#             motor = getattr(sl1k4, axis)
+#             motor.clear_error()
+#         logger.info('homing complete')
+        
+#     #move slits to presets    
+#     for slits in [sl2k0,sl1k4]:    
+#         for axis in axes:
+#             motor = getattr(slits, axis)
+#             motor.presets.sync()
+#             motor.clear_error() #clear any errors before moving
+#             mv = getattr(motor, 'mv_'+preset)
+#             mv()        
+    
+#     #check all slits are done moving
+#     _wait_for_move()
+    
+#     #hacky fix to a problem with using the presets on each motor and removing old values from memory.
+#     #this writes the current position to the set position.
+#     for slits in [sl2k0,sl1k4]:
+#         pos = {}
+#         for axis in ['vg','vo','hg','ho']:
+#             motor = getattr(slits,axis)
+#             pos.update({axis:motor.wm()})
+#         for i in range(2):
+#             for axis in ['vg','hg','vo','ho']:
+#                 motor = getattr(slits,axis)
+#                 #motor.mv(pos[key])
+#                 motor.setpoint.put(pos[axis])
+#             time.sleep(1)   
+
+#     #check all slits are done moving
+#     _wait_for_move()
+            
+#     #log changes to the slits
+#     get_slits([sl2k0,sl1k4], log=True, msg=('Moved slits to previous %s preset position' % preset))
+# #    reset_sl1k0()
+
+# def open_slits(gaps=None, home=False):
+#     """
+#     Log the current positions and open sl1k4 and sl2k0 slits. 
+
+#     Parameters
+#     ----------
+#     gaps : list of floats, optional
+#         List of slit gaps [sl2k0, sl1k4]. The default is [10,14].
+    
+#     """
+
+#     if gaps is not None:
+#         get_slits([sl2k0,sl1k4], log=True, msg='current slit positions before opening.')
+#         sl2k0.hg.umv(gaps[0])
+#         sl2k0.vg.umv(gaps[0])
+#         sl1k4.hg.umv(gaps[1])
+#         sl1k4.vg.umv(gaps[1])
+#     else:
+#         reset_slits(preset='open', home=home)
+    
+# def tweak_slits(gap=None, x=None, y=None):
+#     """
+#     Adjust SL2K0 and SL1K4 together. 
+
+#     Parameters
+#     ----------
+#     gap : float, optional
+#         Value to increase/decrease the gap size. The default is None.
+#     x : float, optional
+#         Value to shift the horizontal offset. The default is None.
+#     y : float, optional
+#         Value to shift the vertical offset. The default is None.
+
+#     """
+    
+#     if gap is not None:
+#         sl2k0.hg.mvr(gap)
+#         sl2k0.vg.mvr(gap)
+#         sl1k4.hg.mvr(gap)
+#         sl1k4.vg.mvr(gap)
+
+#     if x is not None:
+#         sl2k0.ho.mvr(x)
+#         sl1k4.ho.mvr(x)
+        
+#     if y is not None:
+#         sl2k0.vo.mvr(y)
+#         sl1k4.vo.mvr(y)
                
 def get_fzp(log=False, msg=None, include_cam=None, **kwargs):
     """
@@ -743,8 +908,12 @@ def get_fzp(log=False, msg=None, include_cam=None, **kwargs):
                 set_points[keys] = getattr(motor, 'user_setpoint').get()
             else:
                 set_points[keys] = getattr(motor, 'position')
-    curr_positions[pf1k4.z_motor.name] = pf1k4.z_motor.position
-    set_points[pf1k4.z_motor.name] = pf1k4.z_motor.user_setpoint.get()
+    if type(pf1k4) is TypeError:
+        curr_positions['pf1k4_z_motor'] = 'n/c'
+        set_points['pf1k4_z_motor'] = 'n/c'
+    else:
+        curr_positions[pf1k4.z_motor.name] = pf1k4.z_motor.position
+        set_points[pf1k4.z_motor.name] = pf1k4.z_motor.user_setpoint.get()
     if sp1k4_intensifier.connected:
         curr_positions['Intensifier MCP [V]'] = sp1k4_intensifier.mcp_voltage.get()
         curr_positions['Intensifier Gate [us]'] = sp1k4_intensifier.gate_time.get()/1000
@@ -785,6 +954,7 @@ class SP1K4yagLens(SyncAxisTmo):
     offsets = {'yag_x': 0,'lens_x': -5.08979}
 
     #Data from MFL to calibrate the scale and offset
+    #These are from before switching the stem.
     #yag = np.array([2.12,3.12,4.138,1.108,0.058,-0.968,-1.993,-3.018])
     #lens = np.array([-3,-2,-1.05,-4.04,-5.04,-6.039,-7.039,-8.038])
     
@@ -947,7 +1117,7 @@ class FzpDet(BaseInterface, Device):
         return [self]
 
 #ori_roi=(0,2048,1,1164,160,160)
-fzp_det = FzpDet(name='sp1k4_gige')
+#fzp_det = FzpDet(name='sp1k4_gige')
     
      
 

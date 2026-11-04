@@ -6,8 +6,11 @@
 #export CONDA_BASE="/reg/g/pcds/pyps/conda/py36"
 #export CONDA_ENVNAME="pcds-5.3.0"
 #export CONDA_ENVNAME="pcds-5.5.1"
-export CONDA_ENVNAME="pcds-5.7.1"
-export CONDA_BASE="/cds/group/pcds/pyps/conda/py39"
+#export CONDA_ENVNAME="pcds-5.7.1"
+#xport CONDA_ENVNAME="pcds-5.9.1"
+#export CONDA_BASE="/cds/group/pcds/pyps/conda/py39"
+export CONDA_ENVNAME="pcds-6.0.1"
+export CONDA_BASE="/cds/group/pcds/pyps/conda/py312"
 export HUTCH="tmo"
 
 unset PYTHONPATH
@@ -22,5 +25,5 @@ if [ -f "${HERE}/../common/dev/hutch-python/bin/hutch-python" ]; then
 fi
 
 export PYTHONPATH="${HERE}:${HERE}/dev/devpath:${HERE}/../common/dev/devpath"
-source pcdsdaq_lib_setup
+# source pcdsdaq_lib_setup
 export CONDA_PROMPT_MODIFIER="(${HUTCH}-${CONDA_ENVNAME})"

@@ -186,16 +186,16 @@ class DreamGasJet(BaseInterface, Device):
 
         Parameters
         ----------
-        x_list : TYPE
-            DESCRIPTION.
-        z_list : TYPE
-            DESCRIPTION.
-        save : TYPE, optional
-            DESCRIPTION. The default is None.
-        dwell : TYPE, optional
-            DESCRIPTION. The default is 1.
-        repeat : TYPE, optional
-            DESCRIPTION. The default is 1.
+        x_list : List of float
+            List of x-positions to scan (functions will build a grid).
+        z_list : List of float
+            List of z-positions to scane (function will build a grid).
+        save : bool, optional
+            Boolean to indicate to save the data to an h5. The default is True.
+        dwell : int, optional
+            Number of readings to take at each location. The default is 1.
+        repeat : int, optional
+            Number of times to repeat the full scan. The default is 1.
 
         Returns
         -------
@@ -221,9 +221,9 @@ class DreamGasJet(BaseInterface, Device):
         x_0 = tmo_dream.gas_nozzle_x.wm()
         z_0 = tmo_dream.gas_nozzle_z.wm()
         settle_x = tmo_dream.gas_nozzle_x.settle_time
-        tmo_dream.gas_nozzle_x.settle_time = 1 if settle_x < 1 else settle_x
+        tmo_dream.gas_nozzle_x.settle_time = 2 if settle_x < 2 else settle_x
         settle_z = tmo_dream.gas_nozzle_z.settle_time
-        tmo_dream.gas_nozzle_z.settle_time = 1 if settle_z < 1 else settle_z
+        tmo_dream.gas_nozzle_z.settle_time = 2 if settle_z < 2 else settle_z
         
         fig, ax = plt.subplots(2,4) #create figure
         ax = ax.reshape(8) # make axes a single list

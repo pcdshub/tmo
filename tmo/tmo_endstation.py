@@ -1,4 +1,4 @@
-from tmo.db import tmo_cvmi, tmo_lamp, tmo_mrco, tmo_dream, elog
+from tmo.db import tmo_cvmi, tmo_lamp, tmo_mrco, tmo_mbes, tmo_dream, elog
 #from tmo.db import dream_gsjn, dream_gsjp, dream_coil
 #from tmo.tmo_beamline_control import _log_positions
 from tmo.tmo_utils import get_motion as _get_motion
@@ -24,6 +24,7 @@ from tmo.tmo_dream_utils import tmo_dream_sample_paddle
 tmo_lamp_sq1 = SQR1('MCQ:TMO:01', name='tmo_lamp_sq1')
 tmo_cvmi_sq1 = SQR1('MCQ:TMO:02', name='tmo_cvmi_sq1')
 tmo_mrco_sq1 = SQR1('MCQ:TMO:03', name='tmo_mrco_sq1')
+tmo_mbes_sq1 = SQR1('MCQ:TMO:02', name='tmo_mbes_sq1')
 
 
 def exp_switch(IP='ip1', end_station=None):
@@ -42,11 +43,15 @@ def exp_switch(IP='ip1', end_station=None):
     None.
 
     """
+    epics_path='/sdf/home/t/tmoopr/daq/epics/'
+    scripts_path='/sdf/home/t/tmoopr/daq/scripts/'
+    mpod_path='/cds/home/opr/tmoopr/hutch-python/tmo/tmo_mpod_configs/'
+    
     elog_msg = 'Experiment switch'
     logger.debug('IP is %s, endstation is %s' % (IP, end_station))
     if IP.lower() == 'ip1':
         msg = 'updated epicsArch_laser.txt -> epicsArch_laser_ip1.txt'
-        subprocess.run(['ln', '-snf', 'epicsArch_laser_ip1.txt', '/cds/home/opr/tmoopr/misc/epicsArch_laser.txt'])
+        subprocess.run(['ln', '-snf', 'epicsArch_laser_ip1.txt', epics_path+'epicsArch_laser.txt'])
         logger.info(msg)
         elog_msg += ('\n' + msg)
         
@@ -56,15 +61,15 @@ def exp_switch(IP='ip1', end_station=None):
             logger.debug(msg)
             
             msg = 'updated epicsArch_tmo_endstation.txt -> epicsArch_mrco_endstation.txt'
-            subprocess.run(['ln', '-snf', 'epicsArch_mrco_endstation.txt', '/cds/home/opr/tmoopr/misc/epicsArch_tmo_endstation.txt'])
+            subprocess.run(['ln', '-snf', 'epicsArch_mrco_endstation.txt', (epics_path+'epicsArch_tmo_endstation.txt')])
             elog_msg += ('\n' + msg)
             logger.info(msg)
 
-            mpod_name_from_file(filename='/cds/home/opr/tmoopr/hutch-python/tmo/tmo_mpod_configs/mrco.json')
+            mpod_name_from_file(filename=mpod_path+'mrco.json')
             elog_msg += ('\n' + 'update mpod names to mrco.json')
             
             msg = 'updated tmo.py -> tmo_sc_mrco.py'
-            subprocess.run(['ln', '-snf', 'tmo_sc_mrco.py', '/cds/home/opr/tmoopr/daq/tmo.py'])
+            subprocess.run(['ln', '-snf', 'tmo_sc_mrco.py', (scripts_path+'tmo.py')])
             elog_msg += ('\n' + msg)
             logger.info(msg)
         
@@ -74,15 +79,15 @@ def exp_switch(IP='ip1', end_station=None):
             logger.debug(msg)
             
             msg = 'updated epicsArch_tmo_endstation.txt -> epicsArch_mbes.txt'
-            subprocess.run(['ln', '-snf', 'epicsArch_mbes.txt', '/cds/home/opr/tmoopr/misc/epicsArch_tmo_endstation.txt'])
+            subprocess.run(['ln', '-snf', 'epicsArch_mbes.txt', (epics_path+'epicsArch_tmo_endstation.txt')])
             elog_msg += ('\n' + msg)
             logger.info(msg)
             
-            mpod_name_from_file(filename='/cds/home/opr/tmoopr/hutch-python/tmo/tmo_mpod_configs/mbes.json')
+            mpod_name_from_file(filename=mpod_path+'mbes.json')
             elog_msg += ('\n' + 'update mpod names to mbes.json')
             
             msg = 'updated tmo.py -> tmo_sc_mbes.py'
-            subprocess.run(['ln', '-snf', 'tmo_sc_mbes.py', '/cds/home/opr/tmoopr/daq/tmo.py'])
+            subprocess.run(['ln', '-snf', 'tmo_sc_mbes.py', (scripts_path+'tmo.py')])
             elog_msg += ('\n' + msg)
             logger.info(msg)
         
@@ -91,31 +96,31 @@ def exp_switch(IP='ip1', end_station=None):
         
         msg = 'switch to A0_2 inputs for HSD'
         logger.info(msg)
-        subprocess.run(['source ~/daq/setup_env.sh && hsd_input_select -H TMO -I 0'], shell=True, executable="/bin/bash")
+        subprocess.run([('source '+scripts_path+'setup_env.sh && hsd_input_select -H TMO -I 0')], shell=True, executable="/bin/bash")
         elog_msg += ('\n' + msg)
     
     elif IP.lower() == 'ip2':
         msg = 'updated epicsArch_laser.txt -> epicsArch_laser_ip2.txt'
-        subprocess.run(['ln', '-snf', 'epicsArch_laser_ip2.txt', '/cds/home/opr/tmoopr/misc/epicsArch_laser.txt'])
+        subprocess.run(['ln', '-snf', 'epicsArch_laser_ip2.txt', (epics_path+'epicsArch_laser.txt')])
         elog_msg += ('\n' + msg)
         logger.info(msg)
         
         msg = 'updated epicsArch_tmo_endstation.txt -> epicsArch_dream_endstation.txt'
-        subprocess.run(['ln', '-snf', 'epicsArch_dream_endstation.txt', '/cds/home/opr/tmoopr/misc/epicsArch_tmo_endstation.txt'])
+        subprocess.run(['ln', '-snf', 'epicsArch_dream_endstation.txt', (epics_path+'epicsArch_tmo_endstation.txt')])
         elog_msg += ('\n' + msg)
         logger.info(msg)
         
-        mpod_name_from_file(filename='/cds/home/opr/tmoopr/hutch-python/tmo/tmo_mpod_configs/dream.json')
+        mpod_name_from_file(filename=mpod_path+'dream.json')
         elog_msg += ('\n' + 'update mpod names to dream.json')
         
         msg = 'updated tmo.py -> tmo_sc_dream.py'
-        subprocess.run(['ln', '-snf', 'tmo_sc_dream.py', '/cds/home/opr/tmoopr/daq/tmo.py'])
+        subprocess.run(['ln', '-snf', 'tmo_sc_dream.py', (scripts_path+'tmo.py')])
         elog_msg += ('\n' + msg)
         logger.info(msg)
         
         msg = 'switch to A1_3 inputs for HSD'
         logger.info(msg)
-        subprocess.run(['source ~/daq/setup_env.sh && hsd_input_select -H TMO -I 1'], shell=True, executable="/bin/bash")
+        subprocess.run([('source '+scripts_path+'setup_env.sh && hsd_input_select -H TMO -I 1')], shell=True, executable="/bin/bash")
         elog_msg += ('\n' + msg)
         
     else:
@@ -254,6 +259,32 @@ def  get_mrco_sq1(log=False, msg=None, **kwargs):
     kwargs['tags'] = kwargs.get('tags', ' ') + ' sq1'        
     _log_positions(curr_positions, log, msg, **kwargs)
     
+def  get_mbes_sq1(log=False, msg=None, **kwargs):
+    """
+    Get current position of the MBES sq1 stand.
+    
+    Parameters
+    ----------
+    log : boll, optional
+        Flag to post the status to elog. The default is False.
+    msg : str, optional
+        Message to include in elog post. The default is None.
+    include_cam : list of str, optional
+        list of camera names to append to elog post.
+    run : int, optional
+        Associate the post with a specific run
+    tags : list, optional
+        List of tags to add to the post
+    
+    """
+    
+    curr_positions = {}
+    for keys in dir(tmo_mbes_sq1):
+        motor = getattr(tmo_mbes_sq1, keys)
+        if hasattr(motor, 'position'):
+            curr_positions[keys] = getattr(motor, 'position')
+    kwargs['tags'] = kwargs.get('tags', ' ') + ' sq1'        
+    _log_positions(curr_positions, log, msg, **kwargs)
     
 def get_cvmi_motion(log=False, msg=None, include_cam=None, **kwargs):
     """
@@ -287,6 +318,17 @@ def get_mrco_motion(log=False, msg=None, include_cam=None, **kwargs):
     _get_motion(devices, log, msg, include_cam, **kwargs) 
 
 get_mrco_motion.__doc__ += _log_positions.__doc__
+
+def get_mbes_motion(log=False, msg=None, include_cam=['li3k4-gige'], **kwargs):
+    """
+    Get current position of the MBES motion.  
+    """
+    
+    devices = [tmo_mbes, tmo_mbes_sq1]
+    kwargs['tags'] = kwargs.get('tags', ' ') + ' mbes_positions'        
+    _get_motion(devices, log, msg, include_cam, **kwargs) 
+
+get_mbes_motion.__doc__ += _log_positions.__doc__
 
 def get_dream_motion(log=False, msg=None, include_cam=None, **kwargs):
     """
@@ -400,6 +442,7 @@ class HutchVCN(BaseInterface, Device):
 
 tmo_lamp_vcn = HutchVCN('LAMP:VCN:01:',name='tmo_lamp_vcn')
 tmo_mrco_vcn = HutchVCN('MRCO:VCN:01:', name='tmo_mrco_vcn')
+tmo_mbes_vcn = HutchVCN('MBES:VCN:01:',name='tmo_mbes_vcn')
 
 def get_lamp_vcn(log=False, msg=None, **kwargs):
         """
@@ -416,6 +459,14 @@ def get_mrco_vcn(log=False, msg=None, **kwargs):
         """
         tmo_mrco_vcn.status(log, msg, **kwargs)
 get_mrco_vcn.__doc__ += _log_positions.__doc__
+
+def get_mbes_vcn(log=False, msg=None, **kwargs):
+        """
+        Print the status of the remote controlled VAT-590 valve on MBES
+
+        """
+        tmo_mbes_vcn.status(log, msg, **kwargs)
+get_mbes_vcn.__doc__ += _log_positions.__doc__
 
 class BKP(BaseInterface, Device):
     
@@ -487,10 +538,33 @@ tmo_bkp = TmoBkp('TMO:BKP', name='tmo_bkp')
 
 class TmoFps(BaseInterface, Device): 
         tab_component_names= True
-        tab_whitelist = []
+        tab_whitelist = ['get_fps']
         
         fps01 = Cpt(FPS, ':01')
         fps02 = Cpt(FPS, ':02')
-        fps03 = Cpt(FPS, ':03')       
+        fps03 = Cpt(FPS, ':03')   
+        
+        def get_fps(self, log=False, msg=None):
+            """
+            Get the current and voltage setting for the fps power supplies
 
+            Parameters
+            ----------
+            log : bool, optional
+                Flag to post to the elog. The default is False.
+            msg : str, optional
+                Optional message to post in elog. The default is None.
+
+            """
+            settings_dict=OrderedDict()
+            readings_dict=OrderedDict()
+            for ps in ['fps01', 'fps02', 'fps03']:
+                ps_dev = getattr(self, ps)
+                settings_dict[ps_dev.voltage.name]=ps_dev.voltage.setpoint
+                readings_dict[ps_dev.voltage.name]=ps_dev.voltage.get()
+                settings_dict[ps_dev.current.name]=ps_dev.current.setpoint
+                readings_dict[ps_dev.current.name]=ps_dev.current.get()
+                
+            _log_positions(readings_dict, log=log, msg=msg, set_points=settings_dict, tags='fps')
+             
 tmo_fps = TmoFps('TMO:FPS', name='tmo_fps')

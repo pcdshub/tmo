@@ -1,0 +1,76 @@
+from pcdsdevices.device import Device
+from ophyd.status import DeviceStatus
+from pcdsdevices.interface import BaseInterface
+from ophyd.device import Component as Cpt
+from ophyd.device import FormattedComponent as FCpt
+from ophyd.signal import EpicsSignal, EpicsSignalRO
+from tmo.utils import log_positions as _log_positions
+
+class BeckoffAo(BaseInterface, Device):
+    tab_component_names = True
+    
+    value = FCpt(EpicsSignal, '{prefix}:AOUT:{ch}', kind='normal')
+    desc = FCpt(EpicsSignal, '{prefix}:AOUT:{ch}.DESC', kind='normal')
+       
+    def __init__(self, prefix, ch=None, **kwargs):
+        self.ch = ch
+        return super().__init__(prefix, **kwargs)  
+
+class BeckoffDo(BaseInterface, Device):
+    tab_component_names = True
+    tab_whitelist = ['on', 'off']
+    
+    value = FCpt(EpicsSignal, '{prefix}:BOUT:{ch}', kind='normal')
+    desc = FCpt(EpicsSignal, '{prefix}:BOUT:{ch}.DESC', kind='normal')
+    dur = FCpt(EpicsSignal, '{prefix}:BOUT:{ch}.HIGH', kind='normal')
+
+    def __init__(self, prefix, ch=None, **kwargs):
+        self.ch = ch
+        return super().__init__(prefix, **kwargs)  
+    
+    def on(self):
+        self.value.put(1)
+    
+    def off(self):
+        self.value.put(0)
+        
+class BeckhoffTcSingle(BaseInterface, Device):
+    tab_component_names= True
+    tab_whitelist = ['set_alarm', 'disp_alarm']
+    
+    temp = FCpt(EpicsSignalRO, '{prefix}:TC:{ch}', kind='normal')
+    desc = FCpt(EpicsSignal, '{prefix}:TC:{ch}.DESC', kind='normal') 
+    
+    hihi = FCpt(EpicsSignal, '{prefix}:TC:{ch}.HIHI', kind='omitted' )
+    high = FCpt(EpicsSignal, '{prefix}:TC:{ch}.HIGH', kind='omitted' )
+    low = FCpt(EpicsSignal, '{prefix}:TC:{ch}.LOW', kind='omitted' )
+    lolo = FCpt(EpicsSignal, '{prefix}:TC:{ch}.LOLO', kind='omitted' )
+    
+    def __init__(self, prefix, ch=None, **kwargs):
+        self.ch = ch
+        return super().__init__(prefix, **kwargs)  
+    
+    def set_alarm(self, set_points):
+        self.hihi.put(set_points[0])
+        self.high.put(set_points[1])
+        self.low.put(set_points[2])
+        self.lolo.put(set_points[3])
+        
+    @property
+    def disp_alarm(self):
+        levels = {
+            'hihi':self.hihi.get(),
+            'high':self.high.get(),
+            'low':self.low.get(),
+            'lolo':self.lolo.get(),
+            }
+        _log_positions(levels, log=False)
+  
+    
+class BeckoffDm(BaseInterface, Device):
+    tab_component_names = True
+    
+    value = FCpt(EpicsSignal, '{prefix}:DMM:{ch}', kind='normal')
+    desc =FCpt(EpicsSignal, '{prefix}:DMM:{ch}.DESC', kind='normal')    
+    
+    

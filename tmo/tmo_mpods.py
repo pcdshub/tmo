@@ -1,4 +1,4 @@
-from pcdsdevices.mpod_apalis import MPODApalisChannel, MPODApalisModule, MPODApalisModule4Channel, MPODApalisModule8Channel, MPODApalisModule16Channel, MPODApalisModule24Channel
+from pcdsdevices.mpod_apalis import MPODApalisChannel, MPODApalisSoloChannel, MPODApalisModule, MPODApalisModule4Channel, MPODApalisModule8Channel, MPODApalisModule16Channel, MPODApalisModule24Channel
 from ophyd.device import Component as Cpt
 from ophyd import EpicsSignal, EpicsSignalRO
 from pcdsdevices.device import Device, GroupDevice
@@ -106,12 +106,13 @@ class MpodMod(BaseInterface, Device):
                     ch = getattr(mpod, ch_key)
                     if (hasattr(ch, 'desc')):
                         ch.wait_for_connection(timeout=timeout)
-                        if ch.connected:
+                        ch.max_voltage.wait_for_connection(timeout=timeout)
+                        if ch.connected and ch.max_voltage.connected:
                             ch_name = ch.desc.get().replace(' ','_')
                             if ( (ch_name!='') and (ch_name.lower()!='dead') and (ch_name.isidentifier()) ):
                                 pv = ':'.join(ch.desc.pvname.split(':')[0:-1])
-                                defn[ch_name] = Cpt(MPODApalisChannel, pv, kind='hinted')
-                                defn[ch_name].biological_parent = ch.biological_parent
+                                defn[ch_name] = Cpt(MPODApalisSoloChannel, pv, kind='hinted')
+#                                defn[ch_name].biological_parent = ch.biological_parent
                                 logger.debug(ch_name + ' found')
                         else:
                             logger.info(ch.name + ' not connected.')
@@ -126,24 +127,23 @@ class MpodCl(BaseInterface, Device):
     tab_whitelist = ['clear_faults_all','voltage_status','all_off']
     
     mpod_modules = Cpt(MpodMod, 'TMO:MPOD', kind = 'omitted')
-    
+            
     def __init__(self, *args, **kwargs):
-        
+        """hack fix for max voltages and limit issues"""
         super().__init__(*args, **kwargs)
-        for ch_name, o_channel in self.mpod_modules._find_named_channels(0.5).items():
-            ch = getattr(self, ch_name)
-            ch.biological_parent = o_channel.biological_parent
-            ch._new_max_voltage(ch.max_voltage.get())
-            ch._update_max_voltage_limits()
-            logger.debug('update voltage limits for %s' % ch_name)
-        
+        mpod_key = dir(self)
+        for key in mpod_key:
+            mpod = getattr(self, key)
+            if hasattr(mpod, 'max_voltage'):
+                mpod._new_max_voltage(mpod.max_voltage.get())
+            
     def clear_faults_all(self):
         """
         Clear faults on all mpod modules
         """
         self.mpod_modules.clear_faults_all()    
         
-    def voltage_status(self, log=False, msg=None, **kwargs):
+    def voltage_status(self, log=False, msg=None, limits=False, **kwargs):
         """
         Get TMO MPOD Status. Optional to save to elog with a msg. 
 
@@ -165,6 +165,9 @@ class MpodCl(BaseInterface, Device):
                    "isTrip:":[],
                    "wasTrip:":[],
                    "Supply:":[]}
+        if limits:
+            mpod_dict["pos_limit"]=[]
+            mpod_dict["neg_limit"]=[]
         
         mpod_key = dir(self)
         for key in mpod_key:
@@ -182,6 +185,9 @@ class MpodCl(BaseInterface, Device):
 #                    supply_str = supply_str + mpod.voltage.pvname[17]
 #                mpod_dict["Supply:"].append(supply_str)
                 mpod_dict["Supply:"].append(':'.join(mpod.voltage.pvname.split(':')[1:-1]))
+                if limits:
+                    mpod_dict['pos_limit'].append(max(mpod.voltage.limits))
+                    mpod_dict['neg_limit'].append(min(mpod.voltage.limits))
         chDF = pd.DataFrame(mpod_dict)
         sorted_posDF = chDF.sort_values(by=["Channel:"], ascending=True)
         chDF_str = tabulate(sorted_posDF, headers="keys", tablefmt="pretty")
@@ -212,19 +218,6 @@ class MpodCl(BaseInterface, Device):
 # TmoMpod = type('TmoMpod',(MpodCl, BaseInterface, Device), mpod_modules._find_named_channels() )
 TmoMpod = type('TmoMpod',(MpodCl, BaseInterface, GroupDevice), mpod_modules._find_named_channels() )
 tmo_mpod = TmoMpod(name='tmo_mpod')
-
-# author: roberttk 5/30/25 (also the GroupDevice change above)
-# Re-assign the named channels their original parents.
-# Once we have done this, refresh their max voltage limits.  
-# We originally set this to auto update based on the parent module, but this
-# new parent doesn't know it has an additional child.  So if we want to re-read
-# the limits we'll have to update the max voltage and re-read the parent limits
-#for channel_name, original_channel in mpod_modules._find_named_channels().items():
-#    channel = getattr(tmo_mpod, channel_name)
-#    channel.biological_parent = original_channel.biological_parent
-#    channel._new_max_voltage(channel.max_voltage.get())
-#    channel._update_max_voltage_limits()
-
 
 def get_mpod(log=False, msg=None, **kwargs):
     """
@@ -351,7 +344,8 @@ def mpod_name_from_file(filename):
         
     #update desc to arch
     logger.info('Updating epicsArch_mpod01.txt....')
-    with open('/cds/home/opr/tmoopr/misc/epicsArch_mpod01.txt', 'w') as file:
+#    with open('/cds/home/opr/tmoopr/misc/epicsArch_mpod01.txt', 'w') as file:
+    with open('/sdf/home/t/tmoopr/daq/epics/epicsArch_mpod01.txt', 'w') as file:
         file.write(epicsArch_entry)  
 ######Below here is an old way that used mpod_desc_to_arch.##########    
 #    logger.info('running mpod_desc_to_arch...')

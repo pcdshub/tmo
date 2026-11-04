@@ -190,6 +190,13 @@ class mbes_Voltage_utility():
         
         # Classify keys into ion and electron components
         for keys in mpod_keys:
+            # set ramp speed.
+            ch = getattr(tmo_mpod, keys)
+            module_prefix = ch.module_prefix
+            module = getattr(tmo_mpod.mpod_modules,('mpod%s_%s' % (module_prefix.split(':')[-2],module_prefix.split(':')[-1].lower()) ))
+            module.set_voltage_ramp_speed(10)
+#           ch.biological_parent.set_voltage_ramp_speed(10)
+            
             if 'ion'.casefold() in keys.casefold():
                 ion_keys.append(keys)
             else: electron_keys.append(keys)
@@ -474,6 +481,105 @@ class mbes_Voltage_utility():
         time.sleep(1)
         print('Ion Ramp Done!')
         
+
+    def ramp_ion_wolf(self, magnet_voltage = -1000, pmt_voltage = -525):
+        
+        """
+        Ramps the voltage of all ion components according to the predefined settings.
+        """
+        
+        self.ion_magnet_wolf = magnet_voltage
+
+        self.on()
+        self.amplifier('OFF')
+        time.sleep(1)
+        for k in self.ion_keys:
+            if 'flight_tube'.casefold() in k.casefold():
+                self.ion_FT = getattr(tmo_mpod, k)
+                ion_FTVoltage = self.voltage_settings[k]
+                
+            elif 'mcp_b'.casefold() in k.casefold():
+                self.ion_mcpBack = getattr(tmo_mpod, k)
+                ion_mcpBackVoltage = self.voltage_settings[k]
+                
+            elif 'mcp_f'.casefold() in k.casefold():
+                self.ion_mcpFront = getattr(tmo_mpod, k)
+                ion_mcpFrontVoltage = self.voltage_settings[k]
+                
+            elif 'pmt'.casefold() in k.casefold():
+                self.ion_pmt= getattr(tmo_mpod, k)
+                pmtVoltage = self.voltage_settings[k]
+                
+            elif 'scint'.casefold() in k.casefold():
+                self.ion_scn= getattr(tmo_mpod, k)
+                scintillatorVoltage = self.voltage_settings[k]
+        #STARTHERE
+        for k in self.electron_keys:
+            if 'magnet'.casefold() in k.casefold():
+                self.ion_magnet = getattr(tmo_mpod, k)
+                ion_magnetVoltage = self.voltage_settings[k]
+        self.ramp_volt(self.ion_magnet, ion_magnetVoltage, 1)
+            
+        
+        self.ion_pmt.voltage.put(pmtVoltage)
+        #self.ion_scn.voltage.put(pmtVoltage)  #The PS only can do +ve 06/21/26
+        
+        self.ion_scn.voltage.put(0)
+        self.ion_mcpFront.voltage.put(pmtVoltage)
+        self.ion_mcpBack.voltage.put(pmtVoltage)
+        self.ion_FT.voltage.put(pmtVoltage)
+        
+        self.wait_self(self.ion_FT, pmtVoltage)
+        """        
+        #ramping everything scintillator onwards to Ion Flightube############
+
+        volt_steps = self.voltageStepSize(pmtVoltage, scintillatorVoltage, 50)
+        
+        
+        for volts in volt_steps:
+            self.ramp_volt(self.ion_scn, volts, 0)
+            self.ramp_volt(self.ion_mcpFront, volts, 0)
+            self.ramp_volt(self.ion_mcpBack, volts, 0)
+            self.ramp_volt(self.ion_FT, volts, 1)
+        """
+        self.ramp_volt(self.ion_scn, scintillatorVoltage)
+        ######################################################################    
+        
+
+        #volt_steps = self.voltageStepSize(scintillatorVoltage, ion_mcpBackVoltage, 50)
+        volt_steps = self.voltageStepSize(pmtVoltage, ion_mcpBackVoltage, 50)
+        print('Step 1')
+        #print(volt_steps)
+        for volts in volt_steps:
+            self.ramp_volt(self.ion_mcpBack, volts, 0)
+            self.ramp_volt(self.ion_mcpFront,volts, 0)
+            self.ramp_volt(self.ion_FT, volts, 1)
+        self.ramp_volt(self.ion_mcpBack, ion_mcpBackVoltage)
+        #######################################################################
+        if np.abs(ion_mcpFrontVoltage) > np.abs(ion_FTVoltage):
+            volt_steps = self.voltageStepSize(ion_mcpBackVoltage, ion_FTVoltage, 50)
+            #print('Step 2 if')
+            #print(volt_steps)
+            for volts in volt_steps:
+                self.ramp_volt(self.ion_mcpFront,volts, 0)
+                self.ramp_volt(self.ion_FT, volts, 1)
+            self.ramp_volt(self.ion_FT, ion_FTVoltage)
+            self.ramp_volt(self.ion_mcpFront, ion_mcpFrontVoltage, 1)
+        else: 
+            volt_steps = self.voltageStepSize(ion_mcpBackVoltage, ion_mcpFrontVoltage, 50)
+            #print('Step 2 else')
+            #print(volt_steps)
+            for volts in volt_steps:
+                self.ramp_volt(self.ion_mcpFront,volts, 0)
+                self.ramp_volt(self.ion_FT, volts, 1)
+            self.ramp_volt(self.ion_mcpFront, ion_mcpFrontVoltage)
+            self.ramp_volt(self.ion_FT, ion_FTVoltage, 1)
+        
+
+        
+        self.amplifier('ON')
+        time.sleep(1)
+        print('Ion Ramp Done!')
 
     def ramp_electron(self, ret=0):
         """

@@ -9,6 +9,10 @@ from pcdsdevices.device import Device
 from pcdsdevices.interface import BaseInterface
 from tmo.tmo_utils import log_positions as _log_positions
 from tmo.tmo_utils import EpicsSignalROStop
+import pandas as pd
+from tabulate import tabulate
+from tmo.tmo_beamline_control import unds
+from collections import OrderedDict
 import time
 import logging
 logger = logging.getLogger(__name__)
@@ -34,7 +38,7 @@ state_enum ={
 
 class BeamEnergyRequestCheckNew(BeamEnergyRequestNoWait):
     tab_component_names = True
-    tab_whitelist = ['pvname','state']
+    tab_whitelist = ['pvname','state', 'profile_motion']
     
     state_pv = FCpt(
         EpicsSignalROStop,
@@ -101,8 +105,8 @@ class BeamEnergyRequestCheckNew(BeamEnergyRequestNoWait):
 #                raise Exception('Error: %s' % state_enum[value])
             
         initial_setpoint = self.setpoint.get()
-        timeout = kwargs.get('timeout', 10)
-        timeout = timeout if timeout is not None else 10
+        timeout = kwargs.get('timeout', 30)
+        timeout = timeout if timeout is not None else 30
         
         logger.debug('Move requested. current setpoint: %s, requested position: %s, last accepted position: %s, done moving: %s'
                      % (initial_setpoint, position, self.target.get(), self.done_moving.get()))
@@ -146,7 +150,26 @@ class BeamEnergyRequestCheckNew(BeamEnergyRequestNoWait):
             
             }
         _log_positions(pv_dict, log=False)
+    
+    def profile_motion(self, stop=False):
+        """ Monitor the time spent moving undulators."""        
+        def monitor(*, old_value, value, timestamp, **kwargs):
+            delta = timestamp-self.t_stamp
+            logger.debug('%s changed to %s at %s' % (old_value, value, timestamp))
+            if value==0 and old_value==1:
+                print('motion completed, move took %s sec' % delta)
+            if value==1 and old_value==0:
+                print('     motion started, static %s sec' % delta)
+            self.t_stamp = timestamp
+            return
         
+        if stop:
+            self.state_pv.unsubscribe_all()
+            return 
+        self.t_stamp=self.state_pv.timestamp
+        self.state_pv.subscribe(monitor)
+        return
+    
     @property
     def state(self):
         return state_enum[self.state_pv.get()]
@@ -278,23 +301,23 @@ hf_w_check = BeamEnergyRequestCheckNew( prefix='TMO', name='hf_w', pv_index=1, a
 hf_2w_check = BeamEnergyRequestCheckNew( prefix='TMO', name='hf_2w', pv_index=2, acr_target_suffix='AO823', acr_move_status_suffix='AO802', acr_state_suffix='AO917')
     
 class HF_W2W(SyncAxis):
-    hf_w = OCpt(hf_w_check)
-    hf_2w = OCpt(hf_2w_check)
+    w = OCpt(hf_w_check)
+    w2 = OCpt(hf_2w_check)
     tab_component_names = True
-    scales = {'hf_w': 0.5, 'hf_2w':1}
+    scales = {'w': 0.5, 'w2':1}
     warn_deadband = 1E-2
-    fix_sync_keep_still = 'hf_2w'
+    fix_sync_keep_still = 'w2'
     sync_limits = (350, 2E3)
 
 hf_w2w = HF_W2W('', name='hf_w2w')
 
 class HF_W3W(SyncAxis):
-    hf_w = OCpt(hf_w_check)
-    hf_2w = OCpt(hf_2w_check)
+    w = OCpt(hf_w_check)
+    w3 = OCpt(hf_2w_check)
     tab_component_names = True
-    scales = {'hf_w': (1/3),'hf_2w':1}
+    scales = {'w': (1/3),'w3':1}
     warn_deadband = 1E-2
-    fix_sync_keep_still = 'hf_2w'
+    fix_sync_keep_still = 'w3'
     sync_limits = (350, 2E3)
 
 hf_w3w = HF_W3W('', name='hf_w3w')
@@ -321,6 +344,85 @@ class HF(BaseInterface, Device):
     w_NoCheck = Cpt(BeamEnergyRequest, 'TMO', atol=0.1, skip_small_moves=False, pv_index=1, kind='omitted')
     w2_NoCheck = Cpt(BeamEnergyRequest, 'TMO', atol=0.1, skip_small_moves=False, pv_index=2, kind='omitted')     
 hf = HF(name='hf')
+
+def test_hf_move(set_index=1):
+    """ Try to move the unds and see if the start moving."""
+    curr_positions = OrderedDict() #initial positions of unds
+    target_positions = OrderedDict() #where unds are asked to move
+    moving = OrderedDict() # are the unds moving?
+    segs = [] # list of segment names
+    
+    #Get initial und positions
+    for keys in dir(unds):
+        und = getattr(unds, keys)
+        if hasattr(und, 'k_act'):
+            segs.append(int(keys[1:]))
+            curr_positions[keys] = und.k_act.get()
+            
+    #start a move
+    if set_index==1:
+        obj = hf.w        
+    elif set_index==2:
+        obj = hf.w2
+    else:
+        logger.error ('set_index must be 1 or 2')
+        return
+    
+    status = obj.move(1.02*obj.ref.get()) #move by 2% of the photon energy
+    status.wait()
+    if not status.success:                    
+        logger.error('Undulators failed to start moving. Maybe try test again?')       
+        return False
+
+    #wait for move to start    
+    def poll_starting(*, old_value, value, **kwargs):
+        return (value==0) #0 means moving
+    status = SubscriptionStatus(obj.done_moving, poll_starting, timeout=60)
+    status.wait()
+    
+    if not status.success:
+        logger.error('Done moving PV failed to change.')
+        return False
+
+    #wait for move to end
+    def poll_moving(*, old_value, value, **kwargs):
+        return (value==1)
+    status = SubscriptionStatus(obj.done_moving, poll_moving, timeout=60)
+    status.wait()
+
+    #check what moved
+    total_move_status = False
+    for keys in dir(unds):
+        und = getattr(unds, keys)
+        if hasattr(und, 'k_act'):
+            curr = curr_positions[keys]
+            targ = und.k_des.get()
+            target_positions[keys]= targ
+            if abs(curr-targ)>5E-3:
+                moving[keys]=True
+                total_move_status = True
+            else:
+                moving[keys]=False
+    
+    #show what moved
+    if total_move_status:
+        logger.info('Some undulators are moving')
+        positionDF = pd.DataFrame({"Und Seg:": curr_positions.keys(), 
+                                   "Position:": curr_positions.values(),
+                                   "Set Point:": target_positions.values(),
+                                   "Moving:": moving.values()})
+        positionDF_str = tabulate(positionDF, headers="keys", tablefmt="pretty")
+        print (positionDF_str)
+    else:
+        logger.error('No undulators are moving')
+        return total_move_status
+    
+    #move undulators back
+    status = obj.move(obj.ref.get()) #return to reference position
+    status.wait()
+    
+    return total_move_status
+
 
 """
 class HF2(BaseInterface, Device):

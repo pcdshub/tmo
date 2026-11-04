@@ -8,12 +8,13 @@ import datetime
 import pandas as pd
 import logging
 logger = logging.getLogger(__name__)
-sys.path.append('/cds/home/opr/tmoopr')
+#sys.path.append('/cds/home/opr/tmoopr')
+sys.path.append('/sdf/home/t/tmoopr')
 
 
 with safe_load('TMO MPOD Utilities'):
     from tmo.tmo_mpods import get_mpod, tmo_mpod_off, tmo_mpod, mpod_name_from_file #, mpod_modules
-    #from tmo.tmo_mpods import tmo_mpod
+    #from tmo.tmo_mpods import tmo_mpod   
 
 with safe_load('Beam Energy Request'):
 #    from pcdsdevices.beam_stats import BeamEnergyRequest
@@ -43,12 +44,16 @@ with safe_load('BYKIKS'):
 
 with safe_load('TMO Utilities'):
     from tmo.tmo_utils import toggle_arb, update_target, update_target_multi, add_device_to_arch, motor_arch_compare, get_cam, get_device, Shmem, daq_crash
+    from tmo.tmo_utils import tmo_hsd_utils
     
 with safe_load('CVMI Utilities'):
     from tmo.tmo_endstation import tmo_cvmi_sq1, get_cvmi_sq1, get_cvmi_motion
 
 with safe_load('LAMP Utilities'):
     from tmo.tmo_endstation import tmo_lamp_sq1, get_lamp_sq1, get_lamp_motion, tmo_lamp_vcn, get_lamp_vcn
+    
+with safe_load('MBES Utilities'):
+    from tmo.tmo_endstation import tmo_mbes_sq1, get_mbes_motion, get_mbes_sq1, tmo_mbes_vcn, get_mbes_vcn
 
 with safe_load('MRCO Utilities'):
     from tmo.tmo_endstation import tmo_mrco_sq1, get_mrco_motion, get_mrco_sq1, tmo_mrco_vcn, get_mrco_vcn
@@ -135,9 +140,8 @@ with safe_load('X-ray Database Object'):
 with safe_load('END BEAMTIME'):
     from tmo.end_beamTime import end_of_beamtime
 
-
-
-
+with safe_load('Plot Utility'):
+    from tmo.tmo_plot_it import plot_it
 
 #added to laser
 #with safe_load('DREAM SmarPod'):

@@ -5,8 +5,12 @@ from ophyd.device import Component as Cpt
 from ophyd.device import FormattedComponent as FCpt
 from ophyd.pv_positioner import PVPositioner
 from pcdsdevices.interface import FltMvInterface
+from ophyd.status import SubscriptionStatus
 from tmo.tmo_beamline_control import unds
 import numpy as np
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 
@@ -28,7 +32,47 @@ class SXRSS_Chicane(FltMvInterface, PVPositioner):
                 doc='PV that is 0 while the motors are moving and 1 when device is ready for a new request.')
     done_value = 1
     chicane_bend_bact = Cpt(EpicsSignalRO, 'BEND:UNDS:3510:BACT', kind = 'omitted')
+    
+    def move(self, position, alert=True, wait=False, **kwargs):
+        """
+        Move to a specified position, optionally waiting for motion to complete, or write to screen.
+
+        Parameters
+        ----------
+        position
+            Position to move to
+        alert
+            flag to send an alert to the screen when the move completes, the default is True.
+        moved_cb : callable
+            Call this callback when movement has finished. This callback must accept one keyword argument: 'obj' which will be set to this positioner instance.
+        timeout : float, optional
+            Maximum time to wait for the motion. If None, the default timeout for this positioner is used.
+
+        Returns
+        -------
+        status : MoveStatus
+
+        Raises
+        ------
+        TimeoutError
+            When motion takes longer than `timeout`
+        ValueError
+            On invalid positions
+        RuntimeError
+            If motion fails other than timing out
+
+        """
+        def log_the_move(obj):
+            """send message when complete"""
+            print('%s move complete' % obj.name)
+            
+        if alert:        
+            st = super().move(position, moved_cb=log_the_move, wait=wait, **kwargs)
+        else: 
+            st = super().move(position, wait=wait, **kwargs)
         
+        return st
+    
     @property
     def chicane_delay(self):
         return self.readback.get()

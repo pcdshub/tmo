@@ -10,6 +10,7 @@ import pandas as pd
 from collections import OrderedDict
 from tmo.tmo_utils import log_positions as _log_positions
 from tmo.tmo_utils import add_tags as _add_tags
+from tmo.tmo_utils import EpicsSignalPutLog
 import logging
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,9 @@ class PPM_Alignment(BaseInterface, Device):
     tab_component_names = True
     tab_whitelist = ['x_diff','y_diff', 'log_diff']
     x_act = Cpt(EpicsSignalRO, ':PPM:CAM:X_BM_CTR', kind='normal')
-    x_set = Cpt(EpicsSignal, ':PPM:CAM:X_RTCL_CTR', kind='normal')
+    x_set = Cpt(EpicsSignalPutLog, ':PPM:CAM:X_RTCL_CTR', kind='normal')
     y_act = Cpt(EpicsSignalRO, ':PPM:CAM:Y_BM_CTR', kind='normal')
-    y_set = Cpt(EpicsSignal, ':PPM:CAM:Y_RTCL_CTR', kind='normal')
+    y_set = Cpt(EpicsSignalPutLog, ':PPM:CAM:Y_RTCL_CTR', kind='normal')
     target_state = Cpt(EpicsSignalRO, ':PPM:MMS:STATE:GET_RBV', string=True, kind='omitted')
     transmission = FCpt(EpicsSignalRO, 'AT1K0:GAS:TRANS_RBV', kind='omitted')
     photon_energy = FCpt(EpicsSignalRO, 'SIOC:SYS0:ML00:AO628', kind='omitted')

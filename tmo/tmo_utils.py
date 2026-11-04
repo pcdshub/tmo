@@ -315,6 +315,7 @@ def motor_arch_compare(devices, tstamp, plot=False):
 
     tstamp : datetime object or list
         date/time for data to retrieve from archiver data.
+        arguement can also be an experiment string and a run number. 
         
     plot : boolean, optional
         Flag to plot the time-series
@@ -326,14 +327,35 @@ def motor_arch_compare(devices, tstamp, plot=False):
     """
     
     if type(tstamp) is list:
-        tstamp = datetime.datetime(*tstamp)
+        if type(tstamp[0]) is str: #input is experiment and run
+            f_name = '%s/run%s_scantab.h5' % (tstamp[0],tstamp[1])
+            with h5py.File('/sdf/home/t/tmoopr/daq_scan_preproc/' + f_name) as hf:
+                tstamp = datetime.datetime(*(hf['run_start'][:]))
+                tend = datetime.datetime(*(hf['run_stop'][:]))
+        else: #input is a list to convert to datetime
+            tstamp = datetime.datetime(*tstamp)
+            tend = datetime.datetime.now()
     elif not (type(tstamp) is datetime.datetime):
         logger.error('Arguement is not a valid time stammp')
         return
     
     curr_pos=OrderedDict()
     prev_pos=OrderedDict()
-            
+
+    def plot_arch_data(ax, pv, t_start, t_end):
+        arch_data = archive.get(pv, xarray=True, start=t_start, end=t_end) 
+        t_axis=[]
+        t_pt=tstamp
+        t_step = datetime.timedelta(seconds=1)
+        while t_pt<tend:
+             t_pt+=t_step
+             t_axis.append(t_pt)
+        plt_data = arch_data.sel(time=t_axis, method='nearest').to_dataframe()[pv]['vals']
+        ax.plot(t_axis,plt_data)
+        ax.set_xlabel('timestamp')
+        ax.set_ylabel(pv)
+        return arch_data.sel(time=t_start, method='nearest').to_dataframe()[pv]['vals']
+        
     if not isinstance(devices, list):
         devices = [devices]
     
@@ -354,31 +376,26 @@ def motor_arch_compare(devices, tstamp, plot=False):
             pv=device.user_readback.pvname
             if plot: 
                 #get lots of data
-                arch_data = archive.get(pv, xarray=True, start=tstamp, end=datetime.datetime.now()) 
-                arch_data.to_dataframe()[pv].plot(ax=ax[ax_ind])
-                ax[ax_ind].set_xlabel('timestamp')
-                ax[ax_ind].set_ylabel(pv)
+                first_pt = plot_arch_data(ax[ax_ind], pv, tstamp, tend)
                 ax_ind+=1
             else: #get only a little data
                 arch_data = archive.get(pv, xarray=True, start=tstamp, end=tstamp+datetime.timedelta(minutes=1)) 
-            
-            prev_pos[device.name]=arch_data.sel(time=tstamp, method='nearest').to_dataframe()[pv]['vals']
+                first_pt = arch_data.sel(time=tstamp, method='nearest').to_dataframe()[pv]['vals']
+            prev_pos[device.name]=first_pt
            
         elif isinstance(device, str):
             dev_sig = EpicsSignal(device, name=device)
             pv=dev_sig.pvname
             curr_pos[dev_sig.name]=dev_sig.get()
             if plot: #get lots of data
-                arch_data = archive.get(pv, xarray=True, start=tstamp, end=datetime.datetime.now())
-                arch_data.to_dataframe()[pv].plot(ax=ax[ax_ind])
-                ax[ax_ind].set_xlabel('timestamp')
-                ax[ax_ind].set_ylabel(pv)
+                first_pt = plot_arch_data(ax[ax_ind], pv, tstamp, tend)
                 ax_ind+=1
                                     
             else: #get only a little data
                 arch_data = archive.get(pv, xarray=True, start=tstamp, end=tstamp+datetime.timedelta(minutes=1))
+                first_pt = arch_data.sel(time=tstamp, method='nearest').to_dataframe()[pv]['vals']
             
-            prev_pos[dev_sig.name]=arch_data.sel(time=tstamp, method='nearest').to_dataframe()[pv]['vals']
+            prev_pos[dev_sig.name]=first_pt
             
             
         else: #device might have sub-devices with user_readback.
@@ -399,22 +416,19 @@ def motor_arch_compare(devices, tstamp, plot=False):
                                 for i in range(ax_ind):
                                     ax[i].set_subplotspec(gs[i])
                                 ax.append(fig.add_subplot(nc, nr, ax_ind+1))
-                            arch_data = archive.get(pv, xarray=True, start=tstamp, end=datetime.datetime.now())
-                            arch_data.to_dataframe()[pv].plot(ax=ax[ax_ind])
-                            ax[ax_ind].set_xlabel('timestamp')
-                            ax[ax_ind].set_ylabel(pv)
+                            first_pt = plot_arch_data(ax[ax_ind], pv, tstamp, tend)
                             ax_ind+=1
                             
                         else:
                             arch_data = archive.get(pv, xarray=True, start=tstamp, end=tstamp+datetime.timedelta(minutes=1))
-                        
-                        prev_pos[mtr.name]=arch_data.sel(time=tstamp, method='nearest').to_dataframe()[pv]['vals']
+                            first_pt = arch_data.sel(time=tstamp, method='nearest').to_dataframe()[pv]['vals']
+                        prev_pos[mtr.name]=first_pt
             if not sub_dev:
                 logger.error('%s does not have a user_readback or sub-devices with user_readback' % device.name)
                 return
         
     if plot:
-        fig.autofmt_xdate()
+        #fig.autofmt_xdate()
         fig.tight_layout()
     settings = {    'Device':curr_pos.keys(),
                    'Current':curr_pos.values(), 
@@ -850,7 +864,8 @@ def daq_crash(msg=None, restart=True, log_error=True, **kwargs):
     #need to add date functionality...
     if log_error: #load log file
         current_time = datetime.datetime.now()    
-        f_path = '/cds/home/opr/tmoopr/%02d/%02d/' % (current_time.year, current_time.month)
+#        f_path = '/sdf/home/t/tmoopr/%02d/%02d/' % (current_time.year, current_time.month)
+        f_path = '/sdf/home/t/tmoopr/daq/logs/%02d/%02d/' % (current_time.year, current_time.month)
         log_files = glob.glob(os.path.join(f_path, "*:control_gui.log"))
         new_file = ''
         ts = 0
@@ -870,7 +885,71 @@ def daq_crash(msg=None, restart=True, log_error=True, **kwargs):
     elog.post(msg, **kwargs)
     
     if restart: subprocess.run(['restartdaq'])
+
+class TmoHsdUtil():
+    """
+    Utility for converting time to hsd indicies:
         
+    val2hsd: Transform a tof in us, s, or hsd indices to hsd indices
+    val2sec: Transform a tof in us, s, or hsd indices to sec
+        
+    """
+    def __init__(self, dt = 168.353e-6):
+        self.dt = dt
+
+    def val2hsd(self, val, rnd = 'floor'):
+        '''
+        Transform a tof in us, s, or hsd indices to hsd indices
+    
+        Inputs
+            val (float | int): value to convert to hsd index must be of type us, s, or hsd index
+            rnd (str, optional): either 'floor' or 'ceil' whether to round down or up on the hsd index (default is 'floor')
+    
+        Returns
+            val (int): hsd index
+        '''
+        dt = self.dt
+    
+        #us -> hsd
+        if (np.max(val) < 10.1) and (np.max(val) > 1e-3):
+            if rnd == 'floor':
+                return int(np.floor(val/dt))
+            elif rnd == 'ceil':
+                return int(np.ceil(val/dt))
+        #s -> hsd
+        elif (np.max(val) < 10.1) and (np.max(val) < 1e-3):
+            if rnd == 'floor':
+                return int(np.floor(val/dt/1e-6))
+            elif rnd == 'ceil':
+                return int(np.ceil(val/dt/1e-6))
+        #hsd -> hsd
+        else:
+            return val
+    
+    
+    def val2sec(self, val):
+        '''
+        Transform a tof in us, s, or hsd indices to s
+    
+        Inputs
+            val (float | int): value to convert to s must be of type us, s, or hsd index
+    
+        Returns
+            val (float): tof in s
+        '''
+        dt = self.dt
+    
+        #us -> s
+        if (np.max(val) < 10.1) and (np.max(val) > 1e-3):
+            return val/1e6
+        #s -> s
+        elif (np.max(val) < 10.1) and (np.max(val) < 1e-3):
+            return val
+        #hsd -> s
+        else:
+            return val*dt/1e6       
+
+tmo_hsd_utils = TmoHsdUtil()
 
 class SyncAxisTmo(SyncAxis):
     tab_whitelist = ['set_offset_to_current_position']
@@ -894,6 +973,44 @@ class EpicsSignalROStop(EpicsSignalRO):
 class EpicsSignalStop(EpicsSignal):
     def stop(self):
         return
+
+class EpicsSignalPutLog(EpicsSignal):
+    def put(self, value, tags=None, experiment=True, facility=False, **kwargs):
+        """
+        Using channel access, set the write PV to `value`. A post is made in the experiment elog when the value is changed. 
+
+        Keyword arguments are passed on to callbacks
+
+        Parameters
+        ----------
+        value : any
+            The value to set
+        tag : list, optional
+            List of tags to add to the post 
+        experiment : bool, optional
+            Post to the experimental logbook
+        facility  : bool, optional
+            Post to the facility logbook
+        force : bool, optional
+            Skip checking the value in Python first
+        connection_timeout : float, optional
+            If not already connected, allow up to `connection_timeout` seconds
+            for the connection to complete.
+        use_complete : bool, optional
+            Override put completion settings
+        callback : callable
+            Callback for when the put has completed
+        timeout : float, optional
+            Timeout before assuming that put has failed. (Only relevant if
+            put completion is used.)
+        """
+
+        old_value = self._setpoint
+        super().put(value, **kwargs)
+        msg = 'Changed %s from %s to %s' % (self.pvname, old_value, value)
+        if tags is None:
+            tags = 'put_log'
+        elog.post(msg, tags=tags, experiment=experiment, facility=facility)
     
 class ScanCallback(CallbackBase):
     def __init__(self, filepath = '/cds/home/opr/tmoopr/saved_data/'):
