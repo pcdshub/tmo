@@ -108,3 +108,15 @@ ENV/
 
 # h5 files that logs transmission test results
 tmo/mirror-check/scans/TMO_KBO1/*.h5
+
+# Motor presets: live-written by hutch-python, kept on disk only
+presets/
+
+# Vim undo files
+*.un~
+
+# h5 files that log transmission test results (all mirrors)
+tmo/mirror-check/scans/**/*.h5
+
+# Stray caget/camonitor output
+tmo/RVAL
