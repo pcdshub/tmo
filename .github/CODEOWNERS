@@ -1,0 +1,5 @@
+# default group
+* @pcdshub/tmo-members
+
+# github folder holds administrative files
+.github/** @pcdshub/software-admin
